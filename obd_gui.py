@@ -135,18 +135,24 @@ class OBDDashboard(ctk.CTk):
         """
         self.status_val_label.configure(text="Scanning ports...", text_color="#ffd700")
 
-        # Поиск портов с помощью python-obd (pyserial)
-        ports = obd.scan_serial()
-        
-        dropdown_values = ["Auto-Detect"] + ports
-        self.port_dropdown.configure(values=dropdown_values)
-        self.port_dropdown.set("Auto-Detect")
-        
-        # Если включен демо-режим, возвращаем статус
-        if self.demo_switch.get():
-            self.status_val_label.configure(text="DEMO MODE ACTIVE", text_color="#ffd700")
-        else:
-            self.status_val_label.configure(text="Ready to Connect", text_color="#a0a0a0")
+        try:
+            # Поиск портов с помощью python-obd (pyserial)
+            ports = obd.scan_serial()
+            
+            dropdown_values = ["Auto-Detect"] + ports
+            self.port_dropdown.configure(values=dropdown_values)
+            self.port_dropdown.set("Auto-Detect")
+            
+            # Если включен демо-режим, возвращаем статус
+            if self.demo_switch.get():
+                self.status_val_label.configure(text="DEMO MODE ACTIVE", text_color="#ffd700")
+            else:
+                self.status_val_label.configure(text="Ready to Connect", text_color="#a0a0a0")
+        except Exception as e:
+            import traceback
+            print("\n[ОШИБКА СКАНИРОВАНИЯ ПОРТОВ]")
+            traceback.print_exc()
+            self.status_val_label.configure(text="Scan Error", text_color="#c84b4b")
 
     def toggle_connection(self):
         """
@@ -230,6 +236,9 @@ class OBDDashboard(ctk.CTk):
                     self.connection_status = "Connection Failed"
                     self.is_running = False
             except Exception as e:
+                import traceback
+                print("\n[ОШИБКА ПОДКЛЮЧЕНИЯ/ОПРОСА OBD-II]")
+                traceback.print_exc()
                 self.connection_status = f"Error: {str(e)}"
                 self.is_running = False
             finally:
