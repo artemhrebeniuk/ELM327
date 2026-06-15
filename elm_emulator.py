@@ -23,6 +23,7 @@ def run_emulator(port):
     buffer = ""
     engine_temp = 50.0  # Начальная температура двигателя для эмуляции
     start_time = time.time()
+    headers_on = False  # Флаг заголовков (ATH1/ATH0)
     
     try:
         while True:
@@ -47,8 +48,16 @@ def run_emulator(port):
                         cmd_clean = cmd.replace(" ", "")
                         print(f"📥 [Получен запрос]: '{cmd}'")
                         
+                        # Отслеживаем состояние заголовков
+                        if cmd_clean == "ATH1":
+                            headers_on = True
+                        elif cmd_clean == "ATH0":
+                            headers_on = False
+                        elif cmd_clean == "ATZ":
+                            headers_on = False
+                        
                         # Генерируем ответ OBD-II
-                        response = handle_command(cmd_clean, engine_temp, start_time)
+                        response = handle_command(cmd_clean, engine_temp, start_time, headers_on)
                         
                         # Имитируем небольшую задержку ответа реального ЭБУ (50 мс)
                         time.sleep(0.05)
@@ -70,7 +79,7 @@ def run_emulator(port):
         ser.close()
         print("🔌 Порт закрыт.")
 
-def handle_command(cmd, temp, start_time):
+def handle_command(cmd, temp, start_time, headers_on):
     """
     Разбирает входящие AT-команды ELM327 и стандартные OBD-II запросы PIDs (Mode 01).
     Возвращает строку ответа в формате ELM327 с приглашением к вводу '>' на конце.
@@ -78,6 +87,10 @@ def handle_command(cmd, temp, start_time):
     # 1. Базовые команды инициализации ELM327
     if cmd == "ATZ":  # Сброс адаптера
         return "ELM327 v1.5\r\r>"
+    elif cmd == "ATRV":  # Чтение напряжения аккумулятора
+        return "12.4V\r\r>"
+    elif cmd == "ATDPN":  # Чтение текущего протокола
+        return "A6\r\r>"
     elif cmd.startswith("AT"):  # Любые настройки (ATE0, ATL0, ATH0, ATSP и т.д.)
         return "OK\r\r>"
     
@@ -87,7 +100,10 @@ def handle_command(cmd, temp, start_time):
     # Запрос 0100: Поддерживаемые PIDs 1-20
     # Отправляем байты, подтверждающие поддержку: RPM (0C), Speed (0D), Coolant Temp (05), Throttle (11)
     if cmd == "0100":
-        return "41 00 BE 3E A8 13\r\r>"
+        data = "41 00 BE 3E A8 13"
+        if headers_on:
+            return f"7E8 06 {data}\r\r>"
+        return f"{data}\r\r>"
     
     # Запрос 010C: Обороты двигателя (Engine RPM)
     # Формула OBD: ((A * 256) + B) / 4. Мы кодируем обороты обратно в байты.
@@ -98,7 +114,10 @@ def handle_command(cmd, temp, start_time):
         hex_val = int(rpm * 4)
         a = (hex_val >> 8) & 0xFF
         b = hex_val & 0xFF
-        return f"41 0C {a:02X} {b:02X}\r\r>"
+        data = f"41 0C {a:02X} {b:02X}"
+        if headers_on:
+            return f"7E8 04 {data}\r\r>"
+        return f"{data}\r\r>"
         
     # Запрос 010D: Скорость автомобиля (Vehicle Speed)
     # Формула OBD: значение в км/ч совпадает с байтом A.
@@ -106,13 +125,19 @@ def handle_command(cmd, temp, start_time):
         t = time.time() - start_time
         # Скорость меняется волнообразно от 40 до 140 км/ч
         speed = int(90 + 50 * math.sin(t / 8.0))
-        return f"41 0D {speed:02X}\r\r>"
+        data = f"41 0D {speed:02X}"
+        if headers_on:
+            return f"7E8 03 {data}\r\r>"
+        return f"{data}\r\r>"
         
     # Запрос 0105: Температура охлаждающей жидкости (Coolant Temp)
     # Формула OBD: A - 40. Кодируем обратно: байт A = temp + 40
     elif cmd == "0105":
         hex_temp = int(temp + 40) & 0xFF
-        return f"41 05 {hex_temp:02X}\r\r>"
+        data = f"41 05 {hex_temp:02X}"
+        if headers_on:
+            return f"7E8 03 {data}\r\r>"
+        return f"{data}\r\r>"
         
     # Запрос 0111: Положение дроссельной заслонки (Throttle Position)
     # Формула OBD: A * 100 / 255. Кодируем обратно.
@@ -121,7 +146,10 @@ def handle_command(cmd, temp, start_time):
         # Процент открытия заслонки колеблется от 15% до 85%
         throttle = int(50 + 35 * math.sin(t / 4.0))
         hex_throttle = int(throttle * 255 / 100) & 0xFF
-        return f"41 11 {hex_throttle:02X}\r\r>"
+        data = f"41 11 {hex_throttle:02X}"
+        if headers_on:
+            return f"7E8 03 {data}\r\r>"
+        return f"{data}\r\r>"
 
     # Остальные PIDs возвращаем как неподдерживаемые
     else:

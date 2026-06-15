@@ -55,7 +55,7 @@ class OBDDashboardQT(QMainWindow):
         sidebar_layout.setSpacing(20)
 
         # Логотип / Название
-        logo = QLabel("⚡ OBD-II ELM327", sidebar)
+        logo = QLabel("ELM327", sidebar)
         logo.setFont(QFont("Arial", 16, QFont.Bold))
         logo.setAlignment(Qt.AlignCenter)
         sidebar_layout.addWidget(logo)
