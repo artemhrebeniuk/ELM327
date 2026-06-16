@@ -267,10 +267,32 @@ class OBDDashboardQT(QMainWindow):
     def refresh_ports(self):
         self.status_val.setText("Scanning ports...")
         self.status_val.setStyleSheet("color: #ffd700;")
-        
         try:
             # Получаем список портов без блокировки UI
             ports = obd.scan_serial()
+            
+            # Исключаем системные порты macOS, которые гарантированно не являются ELM327 (сбережет время при автопоиске)
+            ports = [p for p in ports if "debug-console" not in p and "Bluetooth-Incoming" not in p]
+            
+            # На macOS автоматически добавляем активные виртуальные порты пользователя (созданные через socat)
+            if sys.platform == 'darwin':
+                import os
+                import glob
+                try:
+                    my_uid = os.getuid()
+                    current_tty = ""
+                    try:
+                        # Определяем имя текущего терминала, откуда запущен скрипт, чтобы скрыть его
+                        current_tty = os.ttyname(sys.stdout.fileno())
+                    except Exception:
+                        pass
+                        
+                    user_ptys = [f for f in glob.glob('/dev/ttys[0-9]*') if os.stat(f).st_uid == my_uid]
+                    for pty in user_ptys:
+                        if pty != current_tty and pty not in ports:
+                            ports.append(pty)
+                except Exception as pty_err:
+                    print(f"Ошибка автопоиска PTY на macOS: {pty_err}")
             
             self.port_dropdown.clear()
             self.port_dropdown.addItem("Auto-Detect")
@@ -360,11 +382,38 @@ class OBDDashboardQT(QMainWindow):
             self.run_demo_loop()
         else:
             selected_port = self.port_dropdown.currentText()
-            port_param = None if selected_port == "Auto-Detect" else selected_port
+            
+            # Собираем список портов для опроса
+            ports_to_try = []
+            if selected_port == "Auto-Detect":
+                # Получаем все порты из выпадающего списка (кроме первого элемента "Auto-Detect")
+                ports_to_try = [self.port_dropdown.itemText(i) for i in range(1, self.port_dropdown.count())]
+                print(f"\n🔍 [АВТО-ПОИСК] Начинаем сканирование доступных портов: {ports_to_try}")
+            else:
+                ports_to_try = [selected_port]
 
-            try:
-                self.connection = obd.OBD(portstr=port_param, fast=False)
-                if self.connection.is_connected():
+            connected = False
+            for port in ports_to_try:
+                print(f"🔌 [ПОДКЛЮЧЕНИЕ] Попытка связаться на порту: {port}...")
+                try:
+                    self.connection = obd.OBD(portstr=port, baudrate=38400, fast=False)
+                    if self.connection.is_connected():
+                        print(f"✅ [ПОДКЛЮЧЕНИЕ] Успешно подключено к ELM327 на порту: {self.connection.port_name()}")
+                        connected = True
+                        break
+                    else:
+                        print(f"❌ [ПОДКЛЮЧЕНИЕ] Порт {port} открылся, но адаптер ELM327 не отвечает.")
+                        if self.connection:
+                            self.connection.close()
+                            self.connection = None
+                except Exception as e:
+                    print(f"❌ [ОШИБКА] Не удалось открыть порт {port}: {e}")
+                    if self.connection:
+                        self.connection.close()
+                        self.connection = None
+
+            if connected:
+                try:
                     status_str = f"Connected on {self.connection.port_name()}"
                     
                     cmd_speed = obd.commands.SPEED
@@ -386,14 +435,18 @@ class OBDDashboardQT(QMainWindow):
                         # Отправляем данные в главный поток
                         self.signals.update_data.emit(speed_val, rpm_val, temp_val, throttle_val, status_str)
                         time.sleep(0.1)
-                else:
-                    self.signals.connection_failed.emit("Connection Failed")
-            except Exception as e:
-                self.signals.connection_failed.emit(f"Error: {str(e)}")
-            finally:
-                if self.connection:
-                    self.connection.close()
-                    self.connection = None
+                except Exception as e:
+                    import traceback
+                    print(f"❌ [ОШИБКА ОПРОСА] Исключение во время работы на порту {self.connection.port_name()}:")
+                    traceback.print_exc()
+                    self.signals.connection_failed.emit(f"Error: {str(e)}")
+                finally:
+                    if self.connection:
+                        self.connection.close()
+                        self.connection = None
+            else:
+                print("❌ [АВТО-ПОИСК] Не удалось найти активный адаптер ELM327 ни на одном из портов.")
+                self.signals.connection_failed.emit("Connection Failed")
 
     def run_demo_loop(self):
         # Алгоритм симуляции поездки

@@ -213,7 +213,7 @@ class OBDDashboard(ctk.CTk):
 
             try:
                 # fast=False повышает стабильность сопряжения
-                self.connection = obd.OBD(portstr=port_param, fast=False)
+                self.connection = obd.OBD(portstr=port_param, baudrate=38400, fast=False)
                 
                 if self.connection.is_connected():
                     self.connection_status = f"Connected on {self.connection.port_name()}"
