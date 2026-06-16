@@ -10,7 +10,7 @@ from PyQt5.QtGui import QFont
 
 # Объект для безопасной передачи данных из фонового потока в GUI поток
 class OBDSignals(QObject):
-    update_data = pyqtSignal(float, float, float, float, str)  # speed, rpm, coolant, throttle, status
+    update_data = pyqtSignal(float, float, float, float, str)  # speed, rpm, coolant, battery, status
     connection_failed = pyqtSignal(str)                       # error message
 
 class OBDDashboardQT(QMainWindow):
@@ -55,7 +55,7 @@ class OBDDashboardQT(QMainWindow):
         sidebar_layout.setSpacing(20)
 
         # Логотип / Название
-        logo = QLabel("ELM327", sidebar)
+        logo = QLabel("⚡ OBD-II ELM327", sidebar)
         logo.setFont(QFont("Arial", 16, QFont.Bold))
         logo.setAlignment(Qt.AlignCenter)
         sidebar_layout.addWidget(logo)
@@ -75,6 +75,16 @@ class OBDDashboardQT(QMainWindow):
         self.port_dropdown = QComboBox(sidebar)
         self.port_dropdown.addItem("Auto-Detect")
         sidebar_layout.addWidget(self.port_dropdown)
+
+        # Выбор скорости (Baudrate)
+        baud_label = QLabel("Select Baudrate:", sidebar)
+        baud_label.setFont(QFont("Arial", 10, QFont.Bold))
+        baud_label.setStyleSheet("color: #888888;")
+        sidebar_layout.addWidget(baud_label)
+
+        self.baud_dropdown = QComboBox(sidebar)
+        self.baud_dropdown.addItems(["Auto (Scan)", "38400", "9600", "115200", "230400"])
+        sidebar_layout.addWidget(self.baud_dropdown)
 
         # Кнопка обновления
         self.refresh_btn = QPushButton("Refresh Ports", sidebar)
@@ -221,40 +231,40 @@ class OBDDashboardQT(QMainWindow):
 
         dashboard_layout.addWidget(self.temp_card, 1, 0)
 
-        # 4. Виджет Дросселя (Throttle Position) - БОТТОМ СПРАВА
-        self.throttle_card = QFrame(dashboard)
-        self.throttle_card.setObjectName("ThrottleCard")
-        throttle_layout = QVBoxLayout(self.throttle_card)
-        throttle_layout.setContentsMargins(20, 15, 20, 15)
-        throttle_layout.addStretch(1)
+        # 4. Виджет Батареи (Battery Charge Level) - БОТТОМ СПРАВА
+        self.battery_card = QFrame(dashboard)
+        self.battery_card.setObjectName("BatteryCard")
+        battery_layout = QVBoxLayout(self.battery_card)
+        battery_layout.setContentsMargins(20, 15, 20, 15)
+        battery_layout.addStretch(1)
 
-        throttle_title = QLabel("⚙️ THROTTLE POSITION", self.throttle_card)
-        throttle_title.setFont(QFont("Arial", 10, QFont.Bold))
-        throttle_title.setStyleSheet("color: #a88beb;")
-        throttle_title.setAlignment(Qt.AlignCenter)
-        throttle_layout.addWidget(throttle_title)
+        battery_title = QLabel("🔋 BATTERY LEVEL (SoC)", self.battery_card)
+        battery_title.setFont(QFont("Arial", 10, QFont.Bold))
+        battery_title.setStyleSheet("color: #00f2fe;")
+        battery_title.setAlignment(Qt.AlignCenter)
+        battery_layout.addWidget(battery_title)
 
-        self.throttle_val_label = QLabel("--", self.throttle_card)
-        self.throttle_val_label.setFont(QFont("Impact", 38))
-        self.throttle_val_label.setAlignment(Qt.AlignCenter)
-        throttle_layout.addWidget(self.throttle_val_label)
+        self.battery_val_label = QLabel("--", self.battery_card)
+        self.battery_val_label.setFont(QFont("Impact", 38))
+        self.battery_val_label.setAlignment(Qt.AlignCenter)
+        battery_layout.addWidget(self.battery_val_label)
 
-        throttle_unit = QLabel("%", self.throttle_card)
-        throttle_unit.setFont(QFont("Arial", 9, QFont.Bold))
-        throttle_unit.setStyleSheet("color: #555555;")
-        throttle_unit.setAlignment(Qt.AlignCenter)
-        throttle_layout.addWidget(throttle_unit)
+        battery_unit = QLabel("%", self.battery_card)
+        battery_unit.setFont(QFont("Arial", 9, QFont.Bold))
+        battery_unit.setStyleSheet("color: #555555;")
+        battery_unit.setAlignment(Qt.AlignCenter)
+        battery_layout.addWidget(battery_unit)
 
-        self.throttle_progress = QProgressBar(self.throttle_card)
-        self.throttle_progress.setObjectName("ThrottleProgress")
-        self.throttle_progress.setMaximum(100)
-        self.throttle_progress.setValue(0)
-        self.throttle_progress.setTextVisible(False)
-        self.throttle_progress.setFixedHeight(8)
-        throttle_layout.addWidget(self.throttle_progress)
-        throttle_layout.addStretch(1)
+        self.battery_progress = QProgressBar(self.battery_card)
+        self.battery_progress.setObjectName("BatteryProgress")
+        self.battery_progress.setMaximum(100)
+        self.battery_progress.setValue(0)
+        self.battery_progress.setTextVisible(False)
+        self.battery_progress.setFixedHeight(8)
+        battery_layout.addWidget(self.battery_progress)
+        battery_layout.addStretch(1)
 
-        dashboard_layout.addWidget(self.throttle_card, 1, 1)
+        dashboard_layout.addWidget(self.battery_card, 1, 1)
 
         # Настройка пропорций строк сетки (верхняя строка больше, нижняя меньше)
         dashboard_layout.setRowStretch(0, 3)
@@ -267,6 +277,7 @@ class OBDDashboardQT(QMainWindow):
     def refresh_ports(self):
         self.status_val.setText("Scanning ports...")
         self.status_val.setStyleSheet("color: #ffd700;")
+        
         try:
             # Получаем список портов без блокировки UI
             ports = obd.scan_serial()
@@ -333,6 +344,7 @@ class OBDDashboardQT(QMainWindow):
                 }
             """)
             self.port_dropdown.setEnabled(True)
+            self.baud_dropdown.setEnabled(True)
             self.refresh_btn.setEnabled(True)
             self.demo_checkbox.setEnabled(True)
             
@@ -340,11 +352,11 @@ class OBDDashboardQT(QMainWindow):
             self.speed_val_label.setText("0")
             self.rpm_val_label.setText("0")
             self.temp_val_label.setText("--")
-            self.throttle_val_label.setText("--")
+            self.battery_val_label.setText("--")
             self.speed_progress.setValue(0)
             self.rpm_progress.setValue(0)
             self.temp_progress.setValue(0)
-            self.throttle_progress.setValue(0)
+            self.battery_progress.setValue(0)
             
             if self.demo_checkbox.isChecked():
                 self.status_val.setText("DEMO MODE ACTIVE")
@@ -365,6 +377,7 @@ class OBDDashboardQT(QMainWindow):
                 }
             """)
             self.port_dropdown.setEnabled(False)
+            self.baud_dropdown.setEnabled(False)
             self.refresh_btn.setEnabled(False)
             self.demo_checkbox.setEnabled(False)
 
@@ -396,7 +409,11 @@ class OBDDashboardQT(QMainWindow):
             for port in ports_to_try:
                 print(f"🔌 [ПОДКЛЮЧЕНИЕ] Попытка связаться на порту: {port}...")
                 try:
-                    self.connection = obd.OBD(portstr=port, baudrate=38400, fast=False)
+                    selected_baud = self.baud_dropdown.currentText()
+                    # Если выбрано "Auto (Scan)", передаем None, чтобы python-OBD сама перебирала скорости
+                    baud_param = None if "Auto" in selected_baud else int(selected_baud)
+                    
+                    self.connection = obd.OBD(portstr=port, baudrate=baud_param, fast=False)
                     if self.connection.is_connected():
                         print(f"✅ [ПОДКЛЮЧЕНИЕ] Успешно подключено к ELM327 на порту: {self.connection.port_name()}")
                         connected = True
@@ -419,21 +436,21 @@ class OBDDashboardQT(QMainWindow):
                     cmd_speed = obd.commands.SPEED
                     cmd_rpm = obd.commands.RPM
                     cmd_temp = obd.commands.COOLANT_TEMP
-                    cmd_throttle = obd.commands.THROTTLE_POS
+                    cmd_battery = obd.commands.HYBRID_BATTERY_REMAINING
 
                     while self.is_running:
                         speed_res = self.connection.query(cmd_speed)
                         rpm_res = self.connection.query(cmd_rpm)
                         temp_res = self.connection.query(cmd_temp)
-                        throttle_res = self.connection.query(cmd_throttle)
+                        battery_res = self.connection.query(cmd_battery)
 
                         speed_val = speed_res.value.magnitude if not speed_res.is_null() else 0.0
                         rpm_val = rpm_res.value.magnitude if not rpm_res.is_null() else 0.0
                         temp_val = temp_res.value.magnitude if not temp_res.is_null() else 0.0
-                        throttle_val = throttle_res.value.magnitude if not throttle_res.is_null() else 0.0
+                        battery_val = battery_res.value.magnitude if not battery_res.is_null() else 0.0
 
                         # Отправляем данные в главный поток
-                        self.signals.update_data.emit(speed_val, rpm_val, temp_val, throttle_val, status_str)
+                        self.signals.update_data.emit(speed_val, rpm_val, temp_val, battery_val, status_str)
                         time.sleep(0.1)
                 except Exception as e:
                     import traceback
@@ -455,6 +472,7 @@ class OBDDashboardQT(QMainWindow):
         current_speed = 0.0
         current_rpm = 800.0
         current_temp = 45.0  # Начальная температура двигателя при прогреве
+        current_battery = 85.0  # Начальный заряд батареи (%)
 
         while self.is_running:
             demo_time += 0.08
@@ -466,11 +484,20 @@ class OBDDashboardQT(QMainWindow):
             else:
                 current_temp = 90.0 + random.uniform(-0.5, 0.5)
 
-            # 2. Симуляция педали газа (Дроссель)
+            # 2. Симуляция разряда батареи и рекуперации (для Audi E-tron)
+            if cycle == 0:  # Разгон (потребление батареи повышено)
+                current_battery -= 0.012
+            else:  # Торможение (РЕКУПЕРАЦИЯ - энергия возвращается в батарею!)
+                current_battery += 0.006
+            
+            # Держим батарею в разумных пределах для демо
+            if current_battery < 20.0:
+                current_battery = 85.0
+            elif current_battery > 100.0:
+                current_battery = 100.0
+
+            # 3. Симуляция движения
             if cycle == 0:  # Разгон
-                # Дроссель выжат при разгоне
-                current_throttle = 75.0 + random.uniform(-5.0, 5.0)
-                
                 gear_max_speeds = {1: 30, 2: 60, 3: 95, 4: 130, 5: 180}
                 current_max = gear_max_speeds.get(demo_gear, 180)
 
@@ -478,8 +505,7 @@ class OBDDashboardQT(QMainWindow):
                 if current_speed >= current_max - 5 and demo_gear < 5:
                     demo_gear += 1
                     current_rpm = 1500
-                    current_throttle = 0.0  # Сброс газа при выжиме сцепления
-                    self.signals.update_data.emit(current_speed, current_rpm, current_temp, current_throttle, "Connected (Simulated)")
+                    self.signals.update_data.emit(current_speed, current_rpm, current_temp, current_battery, "Connected (Simulated)")
                     time.sleep(0.3)
                     continue
 
@@ -490,9 +516,6 @@ class OBDDashboardQT(QMainWindow):
                 base_rpm = 1000 + (current_speed / current_max) * 4500
                 current_rpm = base_rpm + random.uniform(-50, 50)
             else:  # Торможение
-                # Дроссель отпущен
-                current_throttle = 5.0 + random.uniform(-2.0, 2.0)
-                
                 current_speed -= 0.6
                 if current_speed < 0:
                     current_speed = 0
@@ -506,12 +529,11 @@ class OBDDashboardQT(QMainWindow):
                     current_rpm = 800 + (current_speed * 15) + random.uniform(-20, 20)
                 else:
                     current_rpm = 800 + random.uniform(-10, 10)
-                    current_throttle = 0.0
 
-            self.signals.update_data.emit(current_speed, current_rpm, current_temp, current_throttle, "Connected (Simulated)")
+            self.signals.update_data.emit(current_speed, current_rpm, current_temp, current_battery, "Connected (Simulated)")
             time.sleep(0.05)
 
-    def on_data_received(self, speed, rpm, coolant, throttle, status):
+    def on_data_received(self, speed, rpm, coolant, battery, status):
         # Обновление Speed
         self.speed_val_label.setText(f"{int(speed)}")
         self.speed_progress.setValue(int(speed))
@@ -524,9 +546,9 @@ class OBDDashboardQT(QMainWindow):
         self.temp_val_label.setText(f"{int(coolant)}")
         self.temp_progress.setValue(int(coolant))
 
-        # Обновление Throttle
-        self.throttle_val_label.setText(f"{int(throttle)}")
-        self.throttle_progress.setValue(int(throttle))
+        # Обновление Battery
+        self.battery_val_label.setText(f"{int(battery)}")
+        self.battery_progress.setValue(int(battery))
 
         self.status_val.setText(status)
         self.status_val.setStyleSheet("color: #2ecc71;")
@@ -643,7 +665,7 @@ class OBDDashboardQT(QMainWindow):
             }
 
             /* КАРТОЧКИ ПРИБОРОВ */
-            #SpeedCard, #RpmCard, #TempCard, #ThrottleCard {
+            #SpeedCard, #RpmCard, #TempCard, #BatteryCard {
                 background-color: #15161e;
                 border: 1px solid #222533;
                 border-radius: 16px;
@@ -653,7 +675,7 @@ class OBDDashboardQT(QMainWindow):
             #SpeedCard { border-top: 3px solid #00d2ff; }
             #RpmCard { border-top: 3px solid #00fa9a; }
             #TempCard { border-top: 3px solid #ff5e62; }
-            #ThrottleCard { border-top: 3px solid #a88beb; }
+            #BatteryCard { border-top: 3px solid #00f2fe; }
             
             QLabel[text="0"], QLabel[text="--"] {
                 color: #ffffff;
@@ -683,8 +705,8 @@ class OBDDashboardQT(QMainWindow):
                 border-radius: 3px;
             }
             
-            #ThrottleProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7f00ff, stop:1 #e100ff);
+            #BatteryProgress::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #11998e, stop:1 #38ef7d);
                 border-radius: 3px;
             }
         """)

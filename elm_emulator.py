@@ -139,14 +139,30 @@ def handle_command(cmd, temp, start_time, headers_on):
             return f"7E8 03 {data}\r\r>"
         return f"{data}\r\r>"
         
-    # Запрос 0111: Положение дроссельной заслонки (Throttle Position)
+    # Запрос 0140: Поддерживаемые PIDs 41-60
+    # Подтверждаем поддержку: Hybrid battery pack remaining life (5B)
+    elif cmd == "0140":
+        data = "41 40 00 00 00 20"
+        if headers_on:
+            return f"7E8 06 {data}\r\r>"
+        return f"{data}\r\r>"
+        
+    # Запрос 015B: Оставшийся заряд батареи гибрида/электромобиля (Hybrid battery pack remaining life)
     # Формула OBD: A * 100 / 255. Кодируем обратно.
-    elif cmd == "0111":
+    elif cmd == "015B":
         t = time.time() - start_time
-        # Процент открытия заслонки колеблется от 15% до 85%
-        throttle = int(50 + 35 * math.sin(t / 4.0))
-        hex_throttle = int(throttle * 255 / 100) & 0xFF
-        data = f"41 11 {hex_throttle:02X}"
+        # Симулируем медленный разряд батареи со стартовых 85%
+        cycle = (t // 30) % 2
+        base_charge = 85.0 - (t / 60.0) % 15.0
+        
+        # Симулируем рекуперацию при торможении (добавим заряд)
+        if cycle == 1:
+            charge = base_charge + 0.5
+        else:
+            charge = base_charge
+            
+        hex_charge = int(charge * 255 / 100) & 0xFF
+        data = f"41 5B {hex_charge:02X}"
         if headers_on:
             return f"7E8 03 {data}\r\r>"
         return f"{data}\r\r>"
