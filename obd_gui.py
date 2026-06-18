@@ -10,14 +10,52 @@ import random
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+class CircularGauge(tk.Canvas):
+    def __init__(self, master, size=220, line_width=18, max_value=100, **kwargs):
+        # В CustomTkinter (dark mode) фон карточек обычно #2b2b2b или прозрачный.
+        # Мы берем примерный цвет фона фрейма, чтобы скрыть рамку Canvas.
+        super().__init__(master, width=size, height=size, bg="#2b2b2b", highlightthickness=0, **kwargs)
+        self.size = size
+        self.line_width = line_width
+        self.max_value = max_value
+        self.current_value = 0
+        
+        # Углы для шкалы
+        self.start_angle = 225  # Начинается слева снизу
+        self.extent_angle = -270  # Идет по часовой стрелке до правого низа
+        
+        # Координаты квадрата (bounding box) для дуги
+        padding = line_width + 5
+        self.bbox = (padding, padding, size - padding, size - padding)
+        
+        # Рисуем фоновую шкалу (серая)
+        self.bg_arc = self.create_arc(self.bbox, start=self.start_angle, extent=self.extent_angle, 
+                                      style=tk.ARC, width=self.line_width, outline="#3b3b3b")
+        
+        # Рисуем активную шкалу (цветную)
+        self.fg_color = "#5f9ea0" # Дефолтный цвет
+        self.fg_arc = self.create_arc(self.bbox, start=self.start_angle, extent=0, 
+                                      style=tk.ARC, width=self.line_width, outline=self.fg_color)
+                                      
+    def set(self, value):
+        self.current_value = min(max(value, 0), self.max_value)
+        ratio = self.current_value / self.max_value
+        current_extent = self.extent_angle * ratio
+        self.itemconfig(self.fg_arc, extent=current_extent)
+
+    def configure_color(self, color):
+        if self.fg_color != color:
+            self.fg_color = color
+            self.itemconfig(self.fg_arc, outline=self.fg_color)
+
 class OBDDashboard(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         # Настройка окна
         self.title("OBD-II Smart Dashboard")
-        self.geometry("800x480")
-        self.minsize(750, 430)
+        self.geometry("850x500")
+        self.minsize(800, 480)
 
         # Состояние подключения и данных
         self.connection = None
@@ -40,39 +78,43 @@ class OBDDashboard(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- ЛЕВАЯ ПАНЕЛЬ (Панель управления) ---
-        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
         self.sidebar_frame.grid_rowconfigure(8, weight=1)
 
+        # Шрифты
+        font_family_main = "Avenir Next"
+        font_family_mono = "Menlo"
+
         # Логотип / Название
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="⚡ OBD-II ELM327", font=ctk.CTkFont(size=18, weight="bold"))
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="⚡ OBD-II ELM327", font=ctk.CTkFont(family=font_family_main, size=18, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
         # Выбор портов
-        self.port_label = ctk.CTkLabel(self.sidebar_frame, text="Select Port:", anchor="w")
+        self.port_label = ctk.CTkLabel(self.sidebar_frame, text="Select Port:", anchor="w", font=ctk.CTkFont(family=font_family_main))
         self.port_label.grid(row=1, column=0, padx=20, pady=(10, 0), sticky="w")
         
-        self.port_dropdown = ctk.CTkOptionMenu(self.sidebar_frame, values=["Auto-Detect"])
+        self.port_dropdown = ctk.CTkOptionMenu(self.sidebar_frame, values=["Auto-Detect"], font=ctk.CTkFont(family=font_family_main))
         self.port_dropdown.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
 
         # Кнопка обновления портов
-        self.refresh_btn = ctk.CTkButton(self.sidebar_frame, text="Refresh Ports", command=self.refresh_ports, fg_color="transparent", border_width=1)
+        self.refresh_btn = ctk.CTkButton(self.sidebar_frame, text="Refresh Ports", command=self.refresh_ports, fg_color="transparent", border_width=1, font=ctk.CTkFont(family=font_family_main))
         self.refresh_btn.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
 
         # Переключатель Демо-режима
-        self.demo_switch = ctk.CTkSwitch(self.sidebar_frame, text="Demo Simulator Mode")
+        self.demo_switch = ctk.CTkSwitch(self.sidebar_frame, text="Demo Simulator", font=ctk.CTkFont(family=font_family_main))
         self.demo_switch.grid(row=4, column=0, padx=20, pady=15)
-        self.demo_switch.select() # По умолчанию включен демо-режим для быстрого теста
+        self.demo_switch.select()
 
         # Кнопка Подключения
-        self.connect_btn = ctk.CTkButton(self.sidebar_frame, text="Connect", command=self.toggle_connection, fg_color="#2b73b5", hover_color="#1f5385")
+        self.connect_btn = ctk.CTkButton(self.sidebar_frame, text="Connect", command=self.toggle_connection, fg_color="#2b73b5", hover_color="#1f5385", font=ctk.CTkFont(family=font_family_main, weight="bold"))
         self.connect_btn.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
 
         # Статус соединения
-        self.status_title_label = ctk.CTkLabel(self.sidebar_frame, text="Status:", anchor="w", font=ctk.CTkFont(size=11))
+        self.status_title_label = ctk.CTkLabel(self.sidebar_frame, text="Status:", anchor="w", font=ctk.CTkFont(family=font_family_main, size=12))
         self.status_title_label.grid(row=6, column=0, padx=20, pady=(15, 0), sticky="w")
         
-        self.status_val_label = ctk.CTkLabel(self.sidebar_frame, text="DEMO MODE ACTIVE", text_color="#ffd700", font=ctk.CTkFont(size=13, weight="bold"))
+        self.status_val_label = ctk.CTkLabel(self.sidebar_frame, text="DEMO MODE ACTIVE", text_color="#ffd700", font=ctk.CTkFont(family=font_family_main, size=13, weight="bold"))
         self.status_val_label.grid(row=7, column=0, padx=20, pady=0, sticky="w")
 
         # --- ПРАВАЯ ПАНЕЛЬ (Dashboard) ---
@@ -82,68 +124,74 @@ class OBDDashboard(ctk.CTk):
         self.main_frame.grid_columnconfigure(1, weight=1)
         self.main_frame.grid_rowconfigure(0, weight=1)
 
-        # Виджет Спидометра (Скорость)
+        # --- Виджет Спидометра (Скорость) ---
         self.speed_card = ctk.CTkFrame(self.main_frame, corner_radius=15)
         self.speed_card.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        
+        # Центрирование элементов внутри карточки
         self.speed_card.grid_columnconfigure(0, weight=1)
-        self.speed_card.grid_rowconfigure((0, 1, 2, 3), weight=1)
+        self.speed_card.grid_rowconfigure(0, weight=1)
 
-        self.speed_title = ctk.CTkLabel(self.speed_card, text="SPEED", font=ctk.CTkFont(size=16, weight="bold", slant="italic"), text_color="#a0a0a0")
-        self.speed_title.grid(row=0, column=0, pady=(20, 0))
+        # Контейнер для круговой шкалы и текста (накладываем друг на друга)
+        self.speed_inner_frame = ctk.CTkFrame(self.speed_card, fg_color="transparent")
+        self.speed_inner_frame.grid(row=0, column=0)
 
-        self.speed_value_label = ctk.CTkLabel(self.speed_card, text="0", font=ctk.CTkFont(size=72, weight="bold"))
+        # Дуговая шкала скорости
+        self.speed_gauge = CircularGauge(self.speed_inner_frame, size=240, max_value=220)
+        self.speed_gauge.configure_color("#5f9ea0")
+        self.speed_gauge.grid(row=0, column=0, rowspan=4)
+
+        self.speed_title = ctk.CTkLabel(self.speed_inner_frame, text="SPEED", font=ctk.CTkFont(family=font_family_main, size=14, weight="bold", slant="italic"), text_color="#a0a0a0", bg_color="#2b2b2b")
+        self.speed_title.grid(row=0, column=0, pady=(30, 0))
+
+        self.speed_value_label = ctk.CTkLabel(self.speed_inner_frame, text="0", font=ctk.CTkFont(family=font_family_mono, size=64, weight="bold"), bg_color="#2b2b2b")
         self.speed_value_label.grid(row=1, column=0)
 
-        self.speed_unit = ctk.CTkLabel(self.speed_card, text="km/h", font=ctk.CTkFont(size=16, weight="bold"), text_color="#5f9ea0")
-        self.speed_unit.grid(row=2, column=0, pady=(0, 20))
+        self.speed_unit = ctk.CTkLabel(self.speed_inner_frame, text="km/h", font=ctk.CTkFont(family=font_family_main, size=14, weight="bold"), text_color="#5f9ea0", bg_color="#2b2b2b")
+        self.speed_unit.grid(row=2, column=0, pady=(0, 30))
 
-        self.speed_progress = ctk.CTkProgressBar(self.speed_card, width=200, height=12)
-        self.speed_progress.set(0)
-        self.speed_progress.grid(row=3, column=0, pady=(0, 30))
-
-        # Виджет Тахометра (Обороты двигателя)
+        # --- Виджет Тахометра (Обороты двигателя) ---
         self.rpm_card = ctk.CTkFrame(self.main_frame, corner_radius=15)
         self.rpm_card.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+        
         self.rpm_card.grid_columnconfigure(0, weight=1)
-        self.rpm_card.grid_rowconfigure((0, 1, 2, 3), weight=1)
+        self.rpm_card.grid_rowconfigure(0, weight=1)
 
-        self.rpm_title = ctk.CTkLabel(self.rpm_card, text="RPM", font=ctk.CTkFont(size=16, weight="bold", slant="italic"), text_color="#a0a0a0")
-        self.rpm_title.grid(row=0, column=0, pady=(20, 0))
+        self.rpm_inner_frame = ctk.CTkFrame(self.rpm_card, fg_color="transparent")
+        self.rpm_inner_frame.grid(row=0, column=0)
 
-        self.rpm_value_label = ctk.CTkLabel(self.rpm_card, text="0", font=ctk.CTkFont(size=72, weight="bold"))
+        # Дуговая шкала оборотов
+        self.rpm_gauge = CircularGauge(self.rpm_inner_frame, size=240, max_value=7000)
+        self.rpm_gauge.configure_color("#00fa9a")
+        self.rpm_gauge.grid(row=0, column=0, rowspan=4)
+
+        self.rpm_title = ctk.CTkLabel(self.rpm_inner_frame, text="RPM", font=ctk.CTkFont(family=font_family_main, size=14, weight="bold", slant="italic"), text_color="#a0a0a0", bg_color="#2b2b2b")
+        self.rpm_title.grid(row=0, column=0, pady=(30, 0))
+
+        self.rpm_value_label = ctk.CTkLabel(self.rpm_inner_frame, text="0", font=ctk.CTkFont(family=font_family_mono, size=64, weight="bold"), bg_color="#2b2b2b")
         self.rpm_value_label.grid(row=1, column=0)
 
-        self.rpm_unit = ctk.CTkLabel(self.rpm_card, text="RPM", font=ctk.CTkFont(size=16, weight="bold"), text_color="#00fa9a")
-        self.rpm_unit.grid(row=2, column=0, pady=(0, 20))
-
-        self.rpm_progress = ctk.CTkProgressBar(self.rpm_card, width=200, height=12, progress_color="#00fa9a")
-        self.rpm_progress.set(0)
-        self.rpm_progress.grid(row=3, column=0, pady=(0, 30))
+        self.rpm_unit = ctk.CTkLabel(self.rpm_inner_frame, text="x1000", font=ctk.CTkFont(family=font_family_main, size=14, weight="bold"), text_color="#00fa9a", bg_color="#2b2b2b")
+        self.rpm_unit.grid(row=2, column=0, pady=(0, 30))
 
         # Назначаем хэндлер для безопасного выхода
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # Первичное сканирование портов (откладываем на 100мс для корректной отрисовки окна в macOS)
+        # Первичное сканирование портов
         self.after(100, self.refresh_ports)
 
-        # Запускаем цикл обновления UI (откладываем на 150мс)
+        # Запускаем цикл обновления UI
         self.after(150, self.update_ui_loop)
 
     def refresh_ports(self):
-        """
-        Сканирует доступные COM-порты и обновляет выпадающий список.
-        """
         self.status_val_label.configure(text="Scanning ports...", text_color="#ffd700")
 
         try:
-            # Поиск портов с помощью python-obd (pyserial)
             ports = obd.scan_serial()
-            
             dropdown_values = ["Auto-Detect"] + ports
             self.port_dropdown.configure(values=dropdown_values)
             self.port_dropdown.set("Auto-Detect")
             
-            # Если включен демо-режим, возвращаем статус
             if self.demo_switch.get():
                 self.status_val_label.configure(text="DEMO MODE ACTIVE", text_color="#ffd700")
             else:
@@ -155,11 +203,7 @@ class OBDDashboard(ctk.CTk):
             self.status_val_label.configure(text="Scan Error", text_color="#c84b4b")
 
     def toggle_connection(self):
-        """
-        Обрабатывает нажатие кнопки Подключить / Отключить.
-        """
         if self.is_running:
-            # Отключение
             self.stop_polling()
             self.connect_btn.configure(text="Connect", fg_color="#2b73b5", hover_color="#1f5385")
             self.port_dropdown.configure(state="normal")
@@ -171,21 +215,16 @@ class OBDDashboard(ctk.CTk):
             else:
                 self.status_val_label.configure(text="Disconnected", text_color="#e06666")
         else:
-            # Подключение
             self.is_running = True
             self.connect_btn.configure(text="Disconnect", fg_color="#c84b4b", hover_color="#a83b3b")
             self.port_dropdown.configure(state="disabled")
             self.refresh_btn.configure(state="disabled")
             self.demo_switch.configure(state="disabled")
 
-            # Запускаем опрос в фоновом потоке
             self.polling_thread = threading.Thread(target=self.poll_obd_data, daemon=True)
             self.polling_thread.start()
 
     def stop_polling(self):
-        """
-        Безопасно останавливает фоновый поток опроса.
-        """
         self.is_running = False
         if self.polling_thread and self.polling_thread.is_alive():
             self.polling_thread.join(timeout=1.0)
@@ -198,9 +237,6 @@ class OBDDashboard(ctk.CTk):
             self.connection = None
 
     def poll_obd_data(self):
-        """
-        Фоновый поток для опроса ЭБУ машины (или генерации симуляции).
-        """
         is_demo = self.demo_switch.get()
 
         if is_demo:
@@ -212,7 +248,6 @@ class OBDDashboard(ctk.CTk):
             port_param = None if selected_port == "Auto-Detect" else selected_port
 
             try:
-                # fast=False повышает стабильность сопряжения
                 self.connection = obd.OBD(portstr=port_param, baudrate=38400, fast=False)
                 
                 if self.connection.is_connected():
@@ -222,15 +257,12 @@ class OBDDashboard(ctk.CTk):
                     cmd_rpm = obd.commands.RPM
 
                     while self.is_running:
-                        # Запросы к ЭБУ
                         speed_res = self.connection.query(cmd_speed)
                         rpm_res = self.connection.query(cmd_rpm)
 
-                        # Извлечение значений
                         self.current_speed = speed_res.value.magnitude if not speed_res.is_null() else 0.0
                         self.current_rpm = rpm_res.value.magnitude if not rpm_res.is_null() else 0.0
 
-                        # Задержка опроса
                         time.sleep(0.1)
                 else:
                     self.connection_status = "Connection Failed"
@@ -247,52 +279,36 @@ class OBDDashboard(ctk.CTk):
                     self.connection = None
 
     def run_demo_loop(self):
-        """
-        Цикл генерации красивых реалистичных графиков для демонстрации.
-        Симулирует разгон по передачам (1-5 передача).
-        """
         self.demo_time = 0.0
         self.demo_gear = 1
         
         while self.is_running:
-            # Симуляция разгона с переключением передач
-            # Обороты растут, падают при переключении, скорость плавно растет
             self.demo_time += 0.08
+            cycle = (self.demo_time // 30) % 2 
             
-            # Эмуляция педали газа (циклическая езда)
-            cycle = (self.demo_time // 30) % 2 # 30 сек разгон, 30 сек торможение/круиз
-            
-            if cycle == 0: # Разгон
-                # Зависимость оборотов от передачи и времени
+            if cycle == 0: 
                 gear_max_speeds = {1: 30, 2: 60, 3: 95, 4: 130, 5: 180}
                 current_max = gear_max_speeds.get(self.demo_gear, 180)
                 
-                # Если достигли лимита передачи - переключаемся вверх
                 if self.current_speed >= current_max - 5 and self.demo_gear < 5:
                     self.demo_gear += 1
-                    # Короткий провал оборотов при сцеплении
                     self.current_rpm = 1500
                     time.sleep(0.3)
                     continue
 
-                # Симуляция роста скорости
-                self.current_speed += (6.0 - self.demo_gear) * 0.15 # чем выше передача, тем медленнее ускорение
+                self.current_speed += (6.0 - self.demo_gear) * 0.15 
                 if self.current_speed > 180:
                     self.current_speed = 180
 
-                # Обороты двигателя растут пропорционально скорости на текущей передаче
                 base_rpm = 1000 + (self.current_speed / current_max) * 4500
-                # Добавим немного шума двигателя
                 self.current_rpm = base_rpm + random.uniform(-50, 50)
-            else: # Замедление / Сброс газа
+            else: 
                 self.current_speed -= 0.6
                 if self.current_speed < 0:
                     self.current_speed = 0
                     self.demo_gear = 1
                 
-                # При сбросе газа обороты плавно падают к холостым (800)
                 if self.current_speed > 0:
-                    # Переключение передач вниз при торможении
                     gear_min_speeds = {5: 110, 4: 80, 3: 50, 2: 20}
                     for g, min_s in gear_min_speeds.items():
                         if self.current_speed < min_s and self.demo_gear == g:
@@ -305,60 +321,51 @@ class OBDDashboard(ctk.CTk):
             time.sleep(0.05)
 
     def update_ui_loop(self):
-        """
-        Регулярное обновление UI из переменных состояния (вызывается в главном потоке).
-        """
-        # Обновляем текстовые метрики
         if self.is_running:
             self.speed_value_label.configure(text=f"{int(self.current_speed)}")
             self.rpm_value_label.configure(text=f"{int(self.current_rpm)}")
             
-            # Рассчитываем значение прогресс-баров (от 0 до 1)
-            # Макс. шкала скорости: 220 км/ч, оборотов: 7000 об/мин
-            self.speed_progress.set(min(self.current_speed / 220.0, 1.0))
-            
-            rpm_ratio = min(self.current_rpm / 7000.0, 1.0)
-            self.rpm_progress.set(rpm_ratio)
+            # Обновляем круговые шкалы
+            self.speed_gauge.set(self.current_speed)
+            self.rpm_gauge.set(self.current_rpm)
 
-            # Изменение цвета тахометра при высоких оборотах (красная зона > 5000 RPM)
+            # Изменение цвета тахометра (Динамический неон)
             if self.current_rpm > 5500:
-                self.rpm_progress.configure(progress_color="#ff4c4c") # Красный
+                self.rpm_gauge.configure_color("#ff4c4c") # Красный
                 self.rpm_value_label.configure(text_color="#ff4c4c")
+                self.rpm_unit.configure(text_color="#ff4c4c")
             elif self.current_rpm > 4000:
-                self.rpm_progress.configure(progress_color="#ffb732") # Оранжевый
+                self.rpm_gauge.configure_color("#ffb732") # Оранжевый
                 self.rpm_value_label.configure(text_color="#ffb732")
+                self.rpm_unit.configure(text_color="#ffb732")
             else:
-                self.rpm_progress.configure(progress_color="#00fa9a") # Зеленый/Неон
+                self.rpm_gauge.configure_color("#00fa9a") # Зеленый
                 self.rpm_value_label.configure(text_color="#ffffff")
+                self.rpm_unit.configure(text_color="#00fa9a")
 
             self.status_val_label.configure(text=self.connection_status)
             if "Failed" in self.connection_status or "Error" in self.connection_status:
                 self.status_val_label.configure(text_color="#c84b4b")
-                # Возвращаем кнопку в исходное состояние
                 if self.is_running:
                     self.toggle_connection()
             elif "Connected" in self.connection_status:
                 self.status_val_label.configure(text_color="#2ecc71")
         else:
-            # Сброс UI при остановке
             self.speed_value_label.configure(text="0", text_color="#ffffff")
             self.rpm_value_label.configure(text="0", text_color="#ffffff")
-            self.speed_progress.set(0)
-            self.rpm_progress.set(0)
-            self.rpm_progress.configure(progress_color="#00fa9a")
+            self.speed_gauge.set(0)
+            self.rpm_gauge.set(0)
+            self.rpm_gauge.configure_color("#00fa9a")
+            self.rpm_unit.configure(text_color="#00fa9a")
             
             if self.demo_switch.get():
                 self.status_val_label.configure(text="DEMO MODE ACTIVE", text_color="#ffd700")
             else:
                 self.status_val_label.configure(text="Ready to Connect", text_color="#a0a0a0")
 
-        # Перезапуск обновления через 50 миллисекунд (20 кадров в секунду для плавности)
         self.after(50, self.update_ui_loop)
 
     def on_closing(self):
-        """
-        Вызывается при закрытии окна. Обеспечивает безопасное закрытие потоков и портов.
-        """
         self.stop_polling()
         self.destroy()
         sys.exit(0)

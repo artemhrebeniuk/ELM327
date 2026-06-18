@@ -1,14 +1,148 @@
 import sys
+import math
 import threading
 import time
 import random
 import obd
+import os
+import glob
+from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QLabel, QComboBox, QPushButton, QProgressBar, QFrame, QGridLayout, QCheckBox)
-from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject
-from PyQt5.QtGui import QFont
+                             QHBoxLayout, QLabel, QComboBox, QPushButton, QFrame, QGridLayout, QCheckBox, QSizePolicy, QGraphicsDropShadowEffect)
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject, QRectF
+from PyQt5.QtGui import QFont, QPainter, QPen, QColor, QBrush
 
-# Объект для безопасной передачи данных из фонового потока в GUI поток
+class CircularGauge(QWidget):
+    def __init__(self, parent=None, max_value=100, color="#00fa9a"):
+        super().__init__(parent)
+        self.max_value = max_value
+        self.current_value = 0
+        self.gauge_color = QColor(color)
+        self.setMinimumSize(250, 250)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def setValue(self, value):
+        self.current_value = min(max(value, 0), self.max_value)
+        self.update()
+
+    def setColor(self, color_str):
+        new_color = QColor(color_str)
+        if self.gauge_color != new_color:
+            self.gauge_color = new_color
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        side = min(self.width(), self.height())
+        padding = 30 # Больше отступ, чтобы свечение не обрезалось краями виджета
+        rect = QRectF(self.width()/2 - side/2 + padding, 
+                      self.height()/2 - side/2 + padding, 
+                      side - padding*2, side - padding*2)
+        
+        start_angle_deg = 225
+        extent_angle_deg = -270
+        start_angle = start_angle_deg * 16
+        extent_angle = extent_angle_deg * 16
+
+        ratio = self.current_value / self.max_value
+        current_extent = int(extent_angle * ratio)
+
+        arc_width = max(10, int(side * 0.04))
+
+        # --- ЗАСЕЧКИ (Tick Marks) ---
+        painter.save()
+        painter.translate(self.width()/2, self.height()/2)
+        radius = side/2 - padding + arc_width + 4
+        
+        tick_pen = QPen(QColor("#444b66"))
+        tick_pen.setWidth(2)
+        painter.setPen(tick_pen)
+        
+        num_ticks = 14 
+        for i in range(num_ticks + 1):
+            angle_deg = start_angle_deg + (extent_angle_deg * i / num_ticks)
+            angle_rad = math.radians(angle_deg)
+            x1 = radius * math.cos(angle_rad)
+            y1 = -radius * math.sin(angle_rad) 
+            x2 = (radius + 8) * math.cos(angle_rad) 
+            y2 = -(radius + 8) * math.sin(angle_rad)
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+        painter.restore()
+
+        # --- GLOW EFFECT ---
+        if current_extent != 0:
+            glow_color = QColor(self.gauge_color)
+            for i in range(1, 6):
+                glow_color.setAlpha(45 // i) 
+                pen_glow = QPen(glow_color)
+                pen_glow.setWidth(arc_width + i*6) 
+                pen_glow.setCapStyle(Qt.RoundCap)
+                painter.setPen(pen_glow)
+                painter.drawArc(rect, start_angle, current_extent)
+
+        # --- ФОНОВАЯ ДУГА ---
+        pen_bg = QPen(QColor("#222533"))
+        pen_bg.setWidth(arc_width)
+        pen_bg.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen_bg)
+        painter.drawArc(rect, start_angle, extent_angle)
+
+        # --- АКТИВНАЯ ДУГА ---
+        if current_extent != 0:
+            pen_fg = QPen(self.gauge_color)
+            pen_fg.setWidth(arc_width)
+            pen_fg.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen_fg)
+            painter.drawArc(rect, start_angle, current_extent)
+
+class LinearGauge(QWidget):
+    def __init__(self, parent=None, max_value=100, color="#ff5e62"):
+        super().__init__(parent)
+        self.max_value = max_value
+        self.current_value = 0
+        self.gauge_color = QColor(color)
+        self.setMinimumHeight(40)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def setValue(self, value):
+        self.current_value = min(max(value, 0), self.max_value)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        h = 10
+        y = rect.height() // 2 - h // 2
+        w = rect.width() - 20
+        x = 10
+        
+        # Background
+        bg_rect = QRectF(x, y, w, h)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#222533"))
+        painter.drawRoundedRect(bg_rect, h/2, h/2)
+
+        if self.current_value > 0:
+            ratio = self.current_value / self.max_value
+            fill_w = w * ratio
+            fill_rect = QRectF(x, y, fill_w, h)
+            
+            # Glow
+            glow_color = QColor(self.gauge_color)
+            for i in range(1, 5):
+                glow_color.setAlpha(40 // i)
+                painter.setBrush(glow_color)
+                g_rect = QRectF(x, y - i*2, fill_w + i*2, h + i*4)
+                painter.drawRoundedRect(g_rect, (h + i*4)/2, (h + i*4)/2)
+
+            # Foreground
+            painter.setBrush(self.gauge_color)
+            painter.drawRoundedRect(fill_rect, h/2, h/2)
+
 class OBDSignals(QObject):
     update_data = pyqtSignal(float, float, float, float, str)  # speed, rpm, coolant, battery, status
     connection_failed = pyqtSignal(str)                       # error message
@@ -18,35 +152,36 @@ class OBDDashboardQT(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("OBD-II Smart Dashboard (Qt)")
-        self.setGeometry(100, 100, 950, 560)
-        self.setMinimumSize(900, 520)
+        self.setGeometry(100, 100, 1280, 800)
+        self.setMinimumSize(1000, 650)
 
-        # Состояние подключения
         self.connection = None
         self.polling_thread = None
         self.is_running = False
 
-        # Сигналы для потоков
         self.signals = OBDSignals()
         self.signals.update_data.connect(self.on_data_received)
         self.signals.connection_failed.connect(self.on_connection_failed)
 
-        # Инициализация интерфейса
+        self.font_main = "Avenir Next"
+        self.font_mono = "Menlo"
+
+        self.log_filename = None
+        self.error_log_filename = None
+
         self.init_ui()
         self.apply_dark_theme()
 
-        # Сканируем порты при старте
         QTimer.singleShot(200, self.refresh_ports)
 
     def init_ui(self):
-        # Центральный виджет и главный Layout
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # --- ЛЕВАЯ ПАНЕЛЬ (Панель управления) ---
+        # --- ЛЕВАЯ ПАНЕЛЬ ---
         sidebar = QFrame(self)
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(240)
@@ -54,246 +189,240 @@ class OBDDashboardQT(QMainWindow):
         sidebar_layout.setContentsMargins(25, 30, 25, 30)
         sidebar_layout.setSpacing(20)
 
-        # Логотип / Название
         logo = QLabel("⚡ OBD-II ELM327", sidebar)
-        logo.setFont(QFont("Arial", 16, QFont.Bold))
+        logo.setFont(QFont(self.font_main, 16, QFont.Bold))
         logo.setAlignment(Qt.AlignCenter)
         sidebar_layout.addWidget(logo)
 
-        # Разделительная линия
         line = QFrame(sidebar)
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("background-color: #333333; max-height: 1px;")
         sidebar_layout.addWidget(line)
 
-        # Выбор портов
         port_label = QLabel("Select Port:", sidebar)
-        port_label.setFont(QFont("Arial", 10, QFont.Bold))
+        port_label.setFont(QFont(self.font_main, 10, QFont.Bold))
         port_label.setStyleSheet("color: #888888;")
         sidebar_layout.addWidget(port_label)
 
         self.port_dropdown = QComboBox(sidebar)
         self.port_dropdown.addItem("Auto-Detect")
+        self.port_dropdown.setFont(QFont(self.font_main, 12))
         sidebar_layout.addWidget(self.port_dropdown)
 
-        # Выбор скорости (Baudrate)
         baud_label = QLabel("Select Baudrate:", sidebar)
-        baud_label.setFont(QFont("Arial", 10, QFont.Bold))
+        baud_label.setFont(QFont(self.font_main, 10, QFont.Bold))
         baud_label.setStyleSheet("color: #888888;")
         sidebar_layout.addWidget(baud_label)
 
         self.baud_dropdown = QComboBox(sidebar)
         self.baud_dropdown.addItems(["Auto (Scan)", "38400", "9600", "115200", "230400"])
+        self.baud_dropdown.setFont(QFont(self.font_main, 12))
         sidebar_layout.addWidget(self.baud_dropdown)
 
-        # Кнопка обновления
         self.refresh_btn = QPushButton("Refresh Ports", sidebar)
+        self.refresh_btn.setFont(QFont(self.font_main, 12, QFont.Bold))
         self.refresh_btn.clicked.connect(self.refresh_ports)
         sidebar_layout.addWidget(self.refresh_btn)
 
-        # Демо-режим
-        self.demo_checkbox = QCheckBox("Demo Simulator Mode", sidebar)
+        self.demo_checkbox = QCheckBox("Demo Simulator", sidebar)
+        self.demo_checkbox.setFont(QFont(self.font_main, 12))
         self.demo_checkbox.setChecked(True)
         self.demo_checkbox.stateChanged.connect(self.on_demo_toggle)
         sidebar_layout.addWidget(self.demo_checkbox)
 
-        # Кнопка подключения
+        self.log_checkbox = QCheckBox("Log Data to CSV", sidebar)
+        self.log_checkbox.setFont(QFont(self.font_main, 12))
+        sidebar_layout.addWidget(self.log_checkbox)
+
+        self.error_log_checkbox = QCheckBox("Log Errors (DTC)", sidebar)
+        self.error_log_checkbox.setFont(QFont(self.font_main, 12))
+        sidebar_layout.addWidget(self.error_log_checkbox)
+
         self.connect_btn = QPushButton("Connect", sidebar)
         self.connect_btn.setObjectName("ConnectButton")
+        self.connect_btn.setFont(QFont(self.font_main, 14, QFont.Bold))
         self.connect_btn.clicked.connect(self.toggle_connection)
         sidebar_layout.addWidget(self.connect_btn)
 
-        # Статус соединения
         status_title = QLabel("Status:", sidebar)
-        status_title.setFont(QFont("Arial", 10, QFont.Bold))
+        status_title.setFont(QFont(self.font_main, 10, QFont.Bold))
         status_title.setStyleSheet("color: #888888;")
         sidebar_layout.addWidget(status_title)
 
         self.status_val = QLabel("DEMO MODE ACTIVE", sidebar)
         self.status_val.setObjectName("StatusLabel")
-        self.status_val.setFont(QFont("Arial", 11, QFont.Bold))
+        self.status_val.setFont(QFont(self.font_main, 11, QFont.Bold))
         self.status_val.setStyleSheet("color: #ffd700;")
         self.status_val.setWordWrap(True)
         sidebar_layout.addWidget(self.status_val)
 
-        sidebar_layout.addStretch() # Уводит все элементы наверх
+        sidebar_layout.addStretch()
         main_layout.addWidget(sidebar)
 
-        # --- ПРАВАЯ ПАНЕЛЬ (Dashboard Grid) ---
+        # --- ПРАВАЯ ПАНЕЛЬ (Dashboard) ---
         dashboard = QFrame(self)
         dashboard.setObjectName("Dashboard")
         dashboard_layout = QGridLayout(dashboard)
         dashboard_layout.setContentsMargins(25, 25, 25, 25)
         dashboard_layout.setSpacing(20)
 
-        # 1. Виджет Спидометра (Скорость) - ТОП СЛЕВА
+        # 1. СПИДОМЕТР (Круговая шкала)
         self.speed_card = QFrame(dashboard)
         self.speed_card.setObjectName("SpeedCard")
         speed_layout = QVBoxLayout(self.speed_card)
         speed_layout.setContentsMargins(20, 20, 20, 20)
-        speed_layout.addStretch(1)
-        
-        speed_title = QLabel("⚡ SPEED", self.speed_card)
-        speed_title.setFont(QFont("Arial", 11, QFont.Bold))
+
+        self.speed_gauge = CircularGauge(self.speed_card, max_value=220, color="#00d2ff")
+        speed_layout.addWidget(self.speed_gauge)
+
+        # Текст внутри шкалы, чтобы он всегда был отцентрирован и не ломал размер шкалы
+        speed_text_layout = QVBoxLayout(self.speed_gauge)
+        speed_title = QLabel("⚡ SPEED", self.speed_gauge)
+        speed_title.setFont(QFont(self.font_main, 12, QFont.Bold))
         speed_title.setStyleSheet("color: #00d2ff;")
         speed_title.setAlignment(Qt.AlignCenter)
-        speed_layout.addWidget(speed_title)
-
-        self.speed_val_label = QLabel("0", self.speed_card)
-        self.speed_val_label.setFont(QFont("Impact", 68))
+        
+        self.speed_val_label = QLabel("0", self.speed_gauge)
+        self.speed_val_label.setFont(QFont(self.font_mono, 64, QFont.Bold))
         self.speed_val_label.setAlignment(Qt.AlignCenter)
-        speed_layout.addWidget(self.speed_val_label)
-
-        speed_unit = QLabel("km/h", self.speed_card)
-        speed_unit.setFont(QFont("Arial", 11, QFont.Bold))
-        speed_unit.setStyleSheet("color: #555555;")
+        
+        speed_unit = QLabel("km/h", self.speed_gauge)
+        speed_unit.setFont(QFont(self.font_main, 12, QFont.Bold))
+        speed_unit.setStyleSheet("color: #888888;")
         speed_unit.setAlignment(Qt.AlignCenter)
-        speed_layout.addWidget(speed_unit)
-
-        self.speed_progress = QProgressBar(self.speed_card)
-        self.speed_progress.setObjectName("SpeedProgress")
-        self.speed_progress.setMaximum(220)
-        self.speed_progress.setValue(0)
-        self.speed_progress.setTextVisible(False)
-        self.speed_progress.setFixedHeight(12)
-        speed_layout.addWidget(self.speed_progress)
-        speed_layout.addStretch(1)
-
+        
+        speed_text_layout.addStretch(1)
+        speed_text_layout.addWidget(speed_title)
+        speed_text_layout.addWidget(self.speed_val_label)
+        speed_text_layout.addWidget(speed_unit)
+        speed_text_layout.addStretch(1)
+        
         dashboard_layout.addWidget(self.speed_card, 0, 0)
 
-        # 2. Виджет Тахометра (Обороты) - ТОП СПРАВА
+        # 2. ТАХОМЕТР (Круговая шкала)
         self.rpm_card = QFrame(dashboard)
         self.rpm_card.setObjectName("RpmCard")
         rpm_layout = QVBoxLayout(self.rpm_card)
         rpm_layout.setContentsMargins(20, 20, 20, 20)
-        rpm_layout.addStretch(1)
 
-        rpm_title = QLabel("🔥 ENGINE RPM", self.rpm_card)
-        rpm_title.setFont(QFont("Arial", 11, QFont.Bold))
+        self.rpm_gauge = CircularGauge(self.rpm_card, max_value=7000, color="#00fa9a")
+        rpm_layout.addWidget(self.rpm_gauge)
+
+        rpm_text_layout = QVBoxLayout(self.rpm_gauge)
+        rpm_title = QLabel("🔥 ENGINE RPM", self.rpm_gauge)
+        rpm_title.setFont(QFont(self.font_main, 12, QFont.Bold))
         rpm_title.setStyleSheet("color: #00fa9a;")
         rpm_title.setAlignment(Qt.AlignCenter)
-        rpm_layout.addWidget(rpm_title)
-
-        self.rpm_val_label = QLabel("0", self.rpm_card)
-        self.rpm_val_label.setFont(QFont("Impact", 68))
+        
+        self.rpm_val_label = QLabel("0", self.rpm_gauge)
+        self.rpm_val_label.setFont(QFont(self.font_mono, 64, QFont.Bold))
         self.rpm_val_label.setAlignment(Qt.AlignCenter)
-        rpm_layout.addWidget(self.rpm_val_label)
-
-        rpm_unit = QLabel("rpm", self.rpm_card)
-        rpm_unit.setFont(QFont("Arial", 11, QFont.Bold))
-        rpm_unit.setStyleSheet("color: #555555;")
+        
+        rpm_unit = QLabel("rpm", self.rpm_gauge)
+        rpm_unit.setFont(QFont(self.font_main, 12, QFont.Bold))
+        rpm_unit.setStyleSheet("color: #888888;")
         rpm_unit.setAlignment(Qt.AlignCenter)
-        rpm_layout.addWidget(rpm_unit)
 
-        self.rpm_progress = QProgressBar(self.rpm_card)
-        self.rpm_progress.setObjectName("RpmProgress")
-        self.rpm_progress.setMaximum(7000)
-        self.rpm_progress.setValue(0)
-        self.rpm_progress.setTextVisible(False)
-        self.rpm_progress.setFixedHeight(12)
-        rpm_layout.addWidget(self.rpm_progress)
-        rpm_layout.addStretch(1)
+        rpm_text_layout.addStretch(1)
+        rpm_text_layout.addWidget(rpm_title)
+        rpm_text_layout.addWidget(self.rpm_val_label)
+        rpm_text_layout.addWidget(rpm_unit)
+        rpm_text_layout.addStretch(1)
 
         dashboard_layout.addWidget(self.rpm_card, 0, 1)
 
-        # 3. Виджет Температуры (Охл. жидкость) - БОТТОМ СЛЕВА
+        # 3. ТЕМПЕРАТУРА (Индивидуальная линейная шкала)
         self.temp_card = QFrame(dashboard)
         self.temp_card.setObjectName("TempCard")
         temp_layout = QVBoxLayout(self.temp_card)
-        temp_layout.setContentsMargins(20, 15, 20, 15)
-        temp_layout.addStretch(1)
+        temp_layout.setContentsMargins(30, 30, 30, 30)
 
-        temp_title = QLabel("🌡️ COOLANT TEMP", self.temp_card)
-        temp_title.setFont(QFont("Arial", 10, QFont.Bold))
+        temp_header = QHBoxLayout()
+        temp_title = QLabel("🌡️ COOLANT", self.temp_card)
+        temp_title.setFont(QFont(self.font_main, 14, QFont.Bold))
         temp_title.setStyleSheet("color: #ff5e62;")
-        temp_title.setAlignment(Qt.AlignCenter)
-        temp_layout.addWidget(temp_title)
+        
+        self.temp_val_label = QLabel("-- °C", self.temp_card)
+        self.temp_val_label.setFont(QFont(self.font_mono, 32, QFont.Bold))
+        self.temp_val_label.setStyleSheet("color: #ffffff;")
+        self.temp_val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        
+        temp_header.addWidget(temp_title)
+        temp_header.addWidget(self.temp_val_label)
 
-        self.temp_val_label = QLabel("--", self.temp_card)
-        self.temp_val_label.setFont(QFont("Impact", 38))
-        self.temp_val_label.setAlignment(Qt.AlignCenter)
-        temp_layout.addWidget(self.temp_val_label)
+        self.temp_gauge = LinearGauge(self.temp_card, max_value=120, color="#ff5e62")
 
-        temp_unit = QLabel("°C", self.temp_card)
-        temp_unit.setFont(QFont("Arial", 9, QFont.Bold))
-        temp_unit.setStyleSheet("color: #555555;")
-        temp_unit.setAlignment(Qt.AlignCenter)
-        temp_layout.addWidget(temp_unit)
-
-        self.temp_progress = QProgressBar(self.temp_card)
-        self.temp_progress.setObjectName("TempProgress")
-        self.temp_progress.setMaximum(120)
-        self.temp_progress.setValue(0)
-        self.temp_progress.setTextVisible(False)
-        self.temp_progress.setFixedHeight(8)
-        temp_layout.addWidget(self.temp_progress)
+        temp_layout.addStretch(1)
+        temp_layout.addLayout(temp_header)
+        temp_layout.addSpacing(15)
+        temp_layout.addWidget(self.temp_gauge)
         temp_layout.addStretch(1)
 
         dashboard_layout.addWidget(self.temp_card, 1, 0)
 
-        # 4. Виджет Батареи (Battery Charge Level) - БОТТОМ СПРАВА
+        # 4. БАТАРЕЯ (Индивидуальная линейная шкала)
         self.battery_card = QFrame(dashboard)
         self.battery_card.setObjectName("BatteryCard")
         battery_layout = QVBoxLayout(self.battery_card)
-        battery_layout.setContentsMargins(20, 15, 20, 15)
-        battery_layout.addStretch(1)
+        battery_layout.setContentsMargins(30, 30, 30, 30)
 
-        battery_title = QLabel("🔋 BATTERY LEVEL (SoC)", self.battery_card)
-        battery_title.setFont(QFont("Arial", 10, QFont.Bold))
+        battery_header = QHBoxLayout()
+        battery_title = QLabel("🔋 BATTERY", self.battery_card)
+        battery_title.setFont(QFont(self.font_main, 14, QFont.Bold))
         battery_title.setStyleSheet("color: #00f2fe;")
-        battery_title.setAlignment(Qt.AlignCenter)
-        battery_layout.addWidget(battery_title)
+        
+        self.battery_val_label = QLabel("-- %", self.battery_card)
+        self.battery_val_label.setFont(QFont(self.font_mono, 32, QFont.Bold))
+        self.battery_val_label.setStyleSheet("color: #ffffff;")
+        self.battery_val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.battery_val_label = QLabel("--", self.battery_card)
-        self.battery_val_label.setFont(QFont("Impact", 38))
-        self.battery_val_label.setAlignment(Qt.AlignCenter)
-        battery_layout.addWidget(self.battery_val_label)
+        battery_header.addWidget(battery_title)
+        battery_header.addWidget(self.battery_val_label)
 
-        battery_unit = QLabel("%", self.battery_card)
-        battery_unit.setFont(QFont("Arial", 9, QFont.Bold))
-        battery_unit.setStyleSheet("color: #555555;")
-        battery_unit.setAlignment(Qt.AlignCenter)
-        battery_layout.addWidget(battery_unit)
+        self.battery_gauge = LinearGauge(self.battery_card, max_value=100, color="#00f2fe")
 
-        self.battery_progress = QProgressBar(self.battery_card)
-        self.battery_progress.setObjectName("BatteryProgress")
-        self.battery_progress.setMaximum(100)
-        self.battery_progress.setValue(0)
-        self.battery_progress.setTextVisible(False)
-        self.battery_progress.setFixedHeight(8)
-        battery_layout.addWidget(self.battery_progress)
+        battery_layout.addStretch(1)
+        battery_layout.addLayout(battery_header)
+        battery_layout.addSpacing(15)
+        battery_layout.addWidget(self.battery_gauge)
         battery_layout.addStretch(1)
 
         dashboard_layout.addWidget(self.battery_card, 1, 1)
 
-        # Настройка пропорций строк сетки (верхняя строка больше, нижняя меньше)
+        # Настройка пропорций строк сетки
         dashboard_layout.setRowStretch(0, 3)
         dashboard_layout.setRowStretch(1, 2)
         dashboard_layout.setColumnStretch(0, 1)
         dashboard_layout.setColumnStretch(1, 1)
 
+        self.add_shadow(self.speed_card)
+        self.add_shadow(self.rpm_card)
+        self.add_shadow(self.temp_card)
+        self.add_shadow(self.battery_card)
+
         main_layout.addWidget(dashboard, 1)
+
+    def add_shadow(self, widget):
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(40)
+        shadow.setXOffset(0)
+        shadow.setYOffset(15)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        widget.setGraphicsEffect(shadow)
 
     def refresh_ports(self):
         self.status_val.setText("Scanning ports...")
         self.status_val.setStyleSheet("color: #ffd700;")
         
         try:
-            # Получаем список портов без блокировки UI
             ports = obd.scan_serial()
-            
-            # Исключаем системные порты macOS, которые гарантированно не являются ELM327 (сбережет время при автопоиске)
             ports = [p for p in ports if "debug-console" not in p and "Bluetooth-Incoming" not in p]
             
-            # На macOS автоматически добавляем активные виртуальные порты пользователя (созданные через socat)
             if sys.platform == 'darwin':
-                import os
-                import glob
                 try:
                     my_uid = os.getuid()
                     current_tty = ""
                     try:
-                        # Определяем имя текущего терминала, откуда запущен скрипт, чтобы скрыть его
                         current_tty = os.ttyname(sys.stdout.fileno())
                     except Exception:
                         pass
@@ -317,7 +446,6 @@ class OBDDashboardQT(QMainWindow):
                 self.status_val.setStyleSheet("color: #a0a0a0;")
         except Exception as e:
             import traceback
-            print("\n[ОШИБКА СКАНИРОВАНИЯ ПОРТОВ]")
             traceback.print_exc()
             self.status_val.setText("Scan Error")
             self.status_val.setStyleSheet("color: #c84b4b;")
@@ -332,31 +460,27 @@ class OBDDashboardQT(QMainWindow):
 
     def toggle_connection(self):
         if self.is_running:
-            # Отключение
             self.is_running = False
             self.connect_btn.setText("Connect")
             self.connect_btn.setStyleSheet("""
-                QPushButton#ConnectButton {
-                    background-color: #2b73b5;
-                }
-                QPushButton#ConnectButton:hover {
-                    background-color: #3b83c5;
-                }
+                QPushButton#ConnectButton { background-color: #2b73b5; }
+                QPushButton#ConnectButton:hover { background-color: #3b83c5; }
             """)
             self.port_dropdown.setEnabled(True)
             self.baud_dropdown.setEnabled(True)
             self.refresh_btn.setEnabled(True)
             self.demo_checkbox.setEnabled(True)
+            self.log_checkbox.setEnabled(True)
+            self.error_log_checkbox.setEnabled(True)
             
-            # Сброс датчиков
             self.speed_val_label.setText("0")
             self.rpm_val_label.setText("0")
-            self.temp_val_label.setText("--")
-            self.battery_val_label.setText("--")
-            self.speed_progress.setValue(0)
-            self.rpm_progress.setValue(0)
-            self.temp_progress.setValue(0)
-            self.battery_progress.setValue(0)
+            self.temp_val_label.setText("-- °C")
+            self.battery_val_label.setText("-- %")
+            self.speed_gauge.setValue(0)
+            self.rpm_gauge.setValue(0)
+            self.temp_gauge.setValue(0)
+            self.battery_gauge.setValue(0)
             
             if self.demo_checkbox.isChecked():
                 self.status_val.setText("DEMO MODE ACTIVE")
@@ -365,26 +489,37 @@ class OBDDashboardQT(QMainWindow):
                 self.status_val.setText("Disconnected")
                 self.status_val.setStyleSheet("color: #e06666;")
         else:
-            # Подключение
             self.is_running = True
             self.connect_btn.setText("Disconnect")
             self.connect_btn.setStyleSheet("""
-                QPushButton#ConnectButton {
-                    background-color: #c84b4b;
-                }
-                QPushButton#ConnectButton:hover {
-                    background-color: #a83b3b;
-                }
+                QPushButton#ConnectButton { background-color: #c84b4b; }
+                QPushButton#ConnectButton:hover { background-color: #a83b3b; }
             """)
             self.port_dropdown.setEnabled(False)
             self.baud_dropdown.setEnabled(False)
             self.refresh_btn.setEnabled(False)
             self.demo_checkbox.setEnabled(False)
+            self.log_checkbox.setEnabled(False)
+            self.error_log_checkbox.setEnabled(False)
+
+            if self.log_checkbox.isChecked():
+                self.log_filename = f"obd_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                try:
+                    with open(self.log_filename, "w") as f:
+                        f.write("Timestamp,Speed_kmh,RPM,Coolant_C,Battery_pct\n")
+                except Exception as e:
+                    print(f"Error creating log file: {e}")
+            else:
+                self.log_filename = None
+
+            if self.error_log_checkbox.isChecked():
+                self.error_log_filename = f"obd_errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            else:
+                self.error_log_filename = None
 
             self.status_val.setText("Connecting...")
             self.status_val.setStyleSheet("color: #ffd700;")
 
-            # Запускаем опрос в фоновом потоке
             self.polling_thread = threading.Thread(target=self.poll_obd_data, daemon=True)
             self.polling_thread.start()
 
@@ -395,36 +530,23 @@ class OBDDashboardQT(QMainWindow):
             self.run_demo_loop()
         else:
             selected_port = self.port_dropdown.currentText()
-            
-            # Собираем список портов для опроса
-            ports_to_try = []
-            if selected_port == "Auto-Detect":
-                # Получаем все порты из выпадающего списка (кроме первого элемента "Auto-Detect")
-                ports_to_try = [self.port_dropdown.itemText(i) for i in range(1, self.port_dropdown.count())]
-                print(f"\n🔍 [АВТО-ПОИСК] Начинаем сканирование доступных портов: {ports_to_try}")
-            else:
-                ports_to_try = [selected_port]
+            ports_to_try = [self.port_dropdown.itemText(i) for i in range(1, self.port_dropdown.count())] if selected_port == "Auto-Detect" else [selected_port]
 
             connected = False
             for port in ports_to_try:
-                print(f"🔌 [ПОДКЛЮЧЕНИЕ] Попытка связаться на порту: {port}...")
                 try:
                     selected_baud = self.baud_dropdown.currentText()
-                    # Если выбрано "Auto (Scan)", передаем None, чтобы python-OBD сама перебирала скорости
                     baud_param = None if "Auto" in selected_baud else int(selected_baud)
                     
                     self.connection = obd.OBD(portstr=port, baudrate=baud_param, fast=False)
                     if self.connection.is_connected():
-                        print(f"✅ [ПОДКЛЮЧЕНИЕ] Успешно подключено к ELM327 на порту: {self.connection.port_name()}")
                         connected = True
                         break
                     else:
-                        print(f"❌ [ПОДКЛЮЧЕНИЕ] Порт {port} открылся, но адаптер ELM327 не отвечает.")
                         if self.connection:
                             self.connection.close()
                             self.connection = None
                 except Exception as e:
-                    print(f"❌ [ОШИБКА] Не удалось открыть порт {port}: {e}")
                     if self.connection:
                         self.connection.close()
                         self.connection = None
@@ -432,11 +554,12 @@ class OBDDashboardQT(QMainWindow):
             if connected:
                 try:
                     status_str = f"Connected on {self.connection.port_name()}"
-                    
                     cmd_speed = obd.commands.SPEED
                     cmd_rpm = obd.commands.RPM
                     cmd_temp = obd.commands.COOLANT_TEMP
                     cmd_battery = obd.commands.HYBRID_BATTERY_REMAINING
+                    cmd_dtc = obd.commands.GET_DTC
+                    dtc_counter = 0
 
                     while self.is_running:
                         speed_res = self.connection.query(cmd_speed)
@@ -449,59 +572,64 @@ class OBDDashboardQT(QMainWindow):
                         temp_val = temp_res.value.magnitude if not temp_res.is_null() else 0.0
                         battery_val = battery_res.value.magnitude if not battery_res.is_null() else 0.0
 
-                        # Отправляем данные в главный поток
                         self.signals.update_data.emit(speed_val, rpm_val, temp_val, battery_val, status_str)
+                        
+                        dtc_counter += 1
+                        if dtc_counter >= 50:
+                            dtc_counter = 0
+                            if getattr(self, 'error_log_filename', None):
+                                dtc_res = self.connection.query(cmd_dtc)
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                try:
+                                    with open(self.error_log_filename, "a") as f:
+                                        if not dtc_res.is_null() and len(dtc_res.value) > 0:
+                                            errors = ", ".join([f"{code[0]} ({code[1]})" for code in dtc_res.value])
+                                            f.write(f"[{timestamp}] Errors: {errors}\n")
+                                        else:
+                                            f.write(f"[{timestamp}] No errors found.\n")
+                                except Exception:
+                                    pass
+
                         time.sleep(0.1)
                 except Exception as e:
-                    import traceback
-                    print(f"❌ [ОШИБКА ОПРОСА] Исключение во время работы на порту {self.connection.port_name()}:")
-                    traceback.print_exc()
                     self.signals.connection_failed.emit(f"Error: {str(e)}")
                 finally:
                     if self.connection:
                         self.connection.close()
                         self.connection = None
             else:
-                print("❌ [АВТО-ПОИСК] Не удалось найти активный адаптер ELM327 ни на одном из портов.")
                 self.signals.connection_failed.emit("Connection Failed")
 
     def run_demo_loop(self):
-        # Алгоритм симуляции поездки
         demo_time = 0.0
         demo_gear = 1
         current_speed = 0.0
         current_rpm = 800.0
-        current_temp = 45.0  # Начальная температура двигателя при прогреве
-        current_battery = 85.0  # Начальный заряд батареи (%)
+        current_temp = 45.0
+        current_battery = 85.0
+        dtc_counter = 0
 
         while self.is_running:
             demo_time += 0.08
             cycle = (demo_time // 30) % 2
             
-            # 1. Симуляция прогрева двигателя (температура растет до 90 градусов)
             if current_temp < 90.0:
                 current_temp += 0.05
             else:
                 current_temp = 90.0 + random.uniform(-0.5, 0.5)
 
-            # 2. Симуляция разряда батареи и рекуперации (для Audi E-tron)
-            if cycle == 0:  # Разгон (потребление батареи повышено)
+            if cycle == 0:
                 current_battery -= 0.012
-            else:  # Торможение (РЕКУПЕРАЦИЯ - энергия возвращается в батарею!)
+            else:
                 current_battery += 0.006
             
-            # Держим батарею в разумных пределах для демо
-            if current_battery < 20.0:
-                current_battery = 85.0
-            elif current_battery > 100.0:
-                current_battery = 100.0
+            if current_battery < 20.0: current_battery = 85.0
+            elif current_battery > 100.0: current_battery = 100.0
 
-            # 3. Симуляция движения
-            if cycle == 0:  # Разгон
+            if cycle == 0:
                 gear_max_speeds = {1: 30, 2: 60, 3: 95, 4: 130, 5: 180}
                 current_max = gear_max_speeds.get(demo_gear, 180)
 
-                # Переключение передач вверх
                 if current_speed >= current_max - 5 and demo_gear < 5:
                     demo_gear += 1
                     current_rpm = 1500
@@ -510,12 +638,11 @@ class OBDDashboardQT(QMainWindow):
                     continue
 
                 current_speed += (6.0 - demo_gear) * 0.15
-                if current_speed > 180:
-                    current_speed = 180
+                if current_speed > 180: current_speed = 180
 
                 base_rpm = 1000 + (current_speed / current_max) * 4500
                 current_rpm = base_rpm + random.uniform(-50, 50)
-            else:  # Торможение
+            else:
                 current_speed -= 0.6
                 if current_speed < 0:
                     current_speed = 0
@@ -531,42 +658,58 @@ class OBDDashboardQT(QMainWindow):
                     current_rpm = 800 + random.uniform(-10, 10)
 
             self.signals.update_data.emit(current_speed, current_rpm, current_temp, current_battery, "Connected (Simulated)")
+            
+            dtc_counter += 1
+            if dtc_counter >= 50:
+                dtc_counter = 0
+                if getattr(self, 'error_log_filename', None):
+                    try:
+                        with open(self.error_log_filename, "a") as f:
+                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            if random.random() < 0.1:  # 10% chance to simulate an error
+                                f.write(f"[{timestamp}] Errors: P0171 (System too lean)\n")
+                            else:
+                                f.write(f"[{timestamp}] No errors found.\n")
+                    except Exception:
+                        pass
+                        
             time.sleep(0.05)
 
     def on_data_received(self, speed, rpm, coolant, battery, status):
-        # Обновление Speed
+        if self.log_filename:
+            try:
+                with open(self.log_filename, "a") as f:
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    f.write(f"{timestamp},{speed:.1f},{rpm:.1f},{coolant:.1f},{battery:.1f}\n")
+            except Exception:
+                pass
+
         self.speed_val_label.setText(f"{int(speed)}")
-        self.speed_progress.setValue(int(speed))
+        self.speed_gauge.setValue(int(speed))
         
-        # Обновление RPM
         self.rpm_val_label.setText(f"{int(rpm)}")
-        self.rpm_progress.setValue(int(rpm))
+        self.rpm_gauge.setValue(int(rpm))
 
-        # Обновление Coolant
-        self.temp_val_label.setText(f"{int(coolant)}")
-        self.temp_progress.setValue(int(coolant))
+        self.temp_val_label.setText(f"{int(coolant)} °C")
+        self.temp_gauge.setValue(int(coolant))
 
-        # Обновление Battery
-        self.battery_val_label.setText(f"{int(battery)}")
-        self.battery_progress.setValue(int(battery))
+        self.battery_val_label.setText(f"{int(battery)} %")
+        self.battery_gauge.setValue(int(battery))
 
         self.status_val.setText(status)
         self.status_val.setStyleSheet("color: #2ecc71;")
 
-        # Динамический цвет тахометра в зависимости от оборотов
         if rpm > 5500:
-            color = "#ff4c4c" # Красная зона
+            color = "#ff4c4c"
+            self.rpm_val_label.setStyleSheet("color: #ff4c4c;")
         elif rpm > 4000:
-            color = "#ffb732" # Оранжевая зона
+            color = "#ffb732"
+            self.rpm_val_label.setStyleSheet("color: #ffb732;")
         else:
-            color = "#00fa9a" # Зеленая зона
+            color = "#00fa9a"
+            self.rpm_val_label.setStyleSheet("color: #ffffff;")
 
-        self.rpm_progress.setStyleSheet(f"""
-            QProgressBar::chunk {{
-                background-color: {color};
-                border-radius: 6px;
-            }}
-        """)
+        self.rpm_gauge.setColor(color)
 
     def on_connection_failed(self, error_msg):
         self.status_val.setText(error_msg)
@@ -575,7 +718,6 @@ class OBDDashboardQT(QMainWindow):
             self.toggle_connection()
 
     def closeEvent(self, event):
-        # Безопасное завершение при закрытии окна
         self.is_running = False
         if self.polling_thread and self.polling_thread.is_alive():
             self.polling_thread.join(timeout=0.5)
@@ -587,128 +729,64 @@ class OBDDashboardQT(QMainWindow):
         event.accept()
 
     def apply_dark_theme(self):
-        # Премиальный темный стиль в автомобильном неоновом дизайне (QSS)
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #0f1015;
-            }
+        self.setStyleSheet(f"""
+            QMainWindow {{ background-color: #0b0c10; }}
             
-            /* ЛЕВАЯ ПАНЕЛЬ */
-            #Sidebar {
-                background-color: #15161e;
-                border-right: 1px solid #222533;
-            }
+            #Sidebar {{ 
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #12141d, stop:1 #181a24);
+                border-right: 1px solid #1f2233; 
+            }}
             
-            QLabel {
-                color: #ffffff;
-                font-family: "Segoe UI", Arial, sans-serif;
-            }
+            QLabel {{ color: #ffffff; }}
+            QLabel#StatusLabel {{ font-size: 11px; padding: 4px; }}
             
-            QLabel#StatusLabel {
-                font-size: 11px;
-                padding: 4px;
-            }
-
-            QComboBox {
-                background-color: #1c1e29;
-                color: #ffffff;
-                border: 1px solid #2e3247;
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-size: 12px;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1c1e29;
-                color: #ffffff;
-                border: 1px solid #2e3247;
-                selection-background-color: #2b73b5;
-            }
+            /* Стилизация заголовков в сайдбаре */
+            QLabel[text="Select Port:"], QLabel[text="Select Baudrate:"] {{
+                color: #646b8a; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;
+            }}
             
-            QPushButton {
-                background-color: #222533;
-                color: #ffffff;
-                border: 1px solid #2e3247;
-                border-radius: 6px;
-                padding: 10px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #2c3047;
-                border-color: #3b4260;
-            }
-            QPushButton:pressed {
-                background-color: #15161e;
-            }
+            QComboBox {{
+                background-color: #1a1d29; color: #a1a7c4;
+                border: 1px solid #282c3e; border-radius: 8px; padding: 10px 14px;
+            }}
+            QComboBox:hover {{ border-color: #404663; background-color: #1f2231; color: #ffffff; }}
+            QComboBox::drop-down {{ border: none; width: 30px; }}
             
-            #ConnectButton {
-                background-color: #0072ff;
-                border: none;
-                font-size: 13px;
-                padding: 12px;
-            }
-            #ConnectButton:hover {
-                background-color: #0082ff;
-            }
+            QComboBox QAbstractItemView {{
+                background-color: #1a1d29; color: #ffffff;
+                border: 1px solid #282c3e; border-radius: 8px; selection-background-color: #00d2ff;
+            }}
             
-            QCheckBox {
-                color: #a0a5c1;
-                font-size: 12px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-            }
-
-            /* КАРТОЧКИ ПРИБОРОВ */
-            #SpeedCard, #RpmCard, #TempCard, #BatteryCard {
-                background-color: #15161e;
-                border: 1px solid #222533;
-                border-radius: 16px;
-            }
+            QPushButton {{
+                background-color: #202433; color: #ffffff;
+                border: 1px solid #2b3044; border-radius: 8px; padding: 12px; font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #2a2f42; border-color: #404663; }}
+            QPushButton:pressed {{ background-color: #1a1d29; }}
             
-            /* Цветные верхние границы (акценты) */
-            #SpeedCard { border-top: 3px solid #00d2ff; }
-            #RpmCard { border-top: 3px solid #00fa9a; }
-            #TempCard { border-top: 3px solid #ff5e62; }
-            #BatteryCard { border-top: 3px solid #00f2fe; }
+            #ConnectButton {{ 
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #005cff, stop:1 #00d2ff);
+                color: #ffffff; border: none; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: bold;
+            }}
+            #ConnectButton:hover {{ background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #004ecc, stop:1 #00bfff); }}
             
-            QLabel[text="0"], QLabel[text="--"] {
-                color: #ffffff;
-                font-family: "Impact", "Arial Black", sans-serif;
-            }
-
-            /* ШКАЛЫ ПРОГРЕССА */
-            QProgressBar {
-                background-color: #090a0f;
-                border: 1px solid #1c1e29;
-                border-radius: 6px;
-                text-align: center;
-            }
+            QCheckBox {{ color: #8a91b0; font-size: 13px; spacing: 10px; }}
+            QCheckBox::indicator {{ 
+                width: 20px; height: 20px; border-radius: 6px; 
+                border: 1px solid #282c3e; background-color: #1a1d29; 
+            }}
+            QCheckBox::indicator:hover {{ border-color: #00d2ff; }}
+            QCheckBox::indicator:checked {{ background-color: #00d2ff; border-color: #00d2ff; }}
             
-            #SpeedProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0052d4, stop:0.5 #4364f7, stop:1 #6fb1fc);
-                border-radius: 5px;
-            }
+            #SpeedCard, #RpmCard, #TempCard, #BatteryCard {{
+                background-color: #12141d; border: 1px solid #1f2233; border-radius: 18px;
+            }}
+            #SpeedCard {{ border-top: 3px solid #00d2ff; }}
+            #RpmCard {{ border-top: 3px solid #00fa9a; }}
+            #TempCard {{ border-top: 3px solid #ff5e62; }}
+            #BatteryCard {{ border-top: 3px solid #00f2fe; }}
             
-            #RpmProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00fa9a, stop:1 #00ffd0);
-                border-radius: 5px;
-            }
-            
-            #TempProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00c6ff, stop:1 #ff5e62);
-                border-radius: 3px;
-            }
-            
-            #BatteryProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #11998e, stop:1 #38ef7d);
-                border-radius: 3px;
-            }
+            QLabel[text="0"], QLabel[text="--"] {{ color: #ffffff; }}
         """)
 
 if __name__ == "__main__":
