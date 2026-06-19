@@ -219,6 +219,16 @@ class OBDDashboardQT(QMainWindow):
         self.baud_dropdown.setFont(QFont(self.font_main, 12))
         sidebar_layout.addWidget(self.baud_dropdown)
 
+        proto_label = QLabel("Select Protocol:", sidebar)
+        proto_label.setFont(QFont(self.font_main, 10, QFont.Bold))
+        proto_label.setStyleSheet("color: #888888;")
+        sidebar_layout.addWidget(proto_label)
+
+        self.proto_dropdown = QComboBox(sidebar)
+        self.proto_dropdown.addItems(["Auto", "CAN 11-bit 500k (Audi)", "CAN 29-bit 500k", "CAN 11-bit 250k"])
+        self.proto_dropdown.setFont(QFont(self.font_main, 12))
+        sidebar_layout.addWidget(self.proto_dropdown)
+
         self.refresh_btn = QPushButton("Refresh Ports", sidebar)
         self.refresh_btn.setFont(QFont(self.font_main, 12, QFont.Bold))
         self.refresh_btn.clicked.connect(self.refresh_ports)
@@ -436,6 +446,7 @@ class OBDDashboardQT(QMainWindow):
             
             self.port_dropdown.clear()
             self.port_dropdown.addItem("Auto-Detect")
+            self.port_dropdown.addItem("Wi-Fi (192.168.0.10:35000)")
             self.port_dropdown.addItems(ports)
             
             if self.demo_checkbox.isChecked():
@@ -468,6 +479,7 @@ class OBDDashboardQT(QMainWindow):
             """)
             self.port_dropdown.setEnabled(True)
             self.baud_dropdown.setEnabled(True)
+            self.proto_dropdown.setEnabled(True)
             self.refresh_btn.setEnabled(True)
             self.demo_checkbox.setEnabled(True)
             self.log_checkbox.setEnabled(True)
@@ -497,6 +509,7 @@ class OBDDashboardQT(QMainWindow):
             """)
             self.port_dropdown.setEnabled(False)
             self.baud_dropdown.setEnabled(False)
+            self.proto_dropdown.setEnabled(False)
             self.refresh_btn.setEnabled(False)
             self.demo_checkbox.setEnabled(False)
             self.log_checkbox.setEnabled(False)
@@ -534,11 +547,23 @@ class OBDDashboardQT(QMainWindow):
 
             connected = False
             for port in ports_to_try:
+                if selected_port == "Auto-Detect" and "Wi-Fi" in port:
+                    continue  # Don't try Wi-Fi during serial auto-detect scan
                 try:
                     selected_baud = self.baud_dropdown.currentText()
                     baud_param = None if "Auto" in selected_baud else int(selected_baud)
                     
-                    self.connection = obd.OBD(portstr=port, baudrate=baud_param, fast=False)
+                    selected_proto = self.proto_dropdown.currentText()
+                    proto_param = None
+                    if "CAN 11-bit 500k" in selected_proto:
+                        proto_param = "6"
+                    elif "CAN 29-bit 500k" in selected_proto:
+                        proto_param = "7"
+                    elif "CAN 11-bit 250k" in selected_proto:
+                        proto_param = "8"
+                    
+                    actual_port = "socket://192.168.0.10:35000" if "Wi-Fi" in port else port
+                    self.connection = obd.OBD(portstr=actual_port, baudrate=baud_param, protocol=proto_param, fast=False)
                     if self.connection.is_connected():
                         connected = True
                         break
@@ -562,15 +587,26 @@ class OBDDashboardQT(QMainWindow):
                     dtc_counter = 0
 
                     while self.is_running:
-                        speed_res = self.connection.query(cmd_speed)
-                        rpm_res = self.connection.query(cmd_rpm)
-                        temp_res = self.connection.query(cmd_temp)
-                        battery_res = self.connection.query(cmd_battery)
+                        speed_res = self.connection.query(cmd_speed, force=True)
+                        time.sleep(0.08)
+                        rpm_res = self.connection.query(cmd_rpm, force=True)
+                        time.sleep(0.08)
+                        temp_res = self.connection.query(cmd_temp, force=True)
+                        time.sleep(0.08)
+                        battery_res = self.connection.query(cmd_battery, force=True)
+                        time.sleep(0.08)
 
                         speed_val = speed_res.value.magnitude if not speed_res.is_null() else 0.0
                         rpm_val = rpm_res.value.magnitude if not rpm_res.is_null() else 0.0
                         temp_val = temp_res.value.magnitude if not temp_res.is_null() else 0.0
                         battery_val = battery_res.value.magnitude if not battery_res.is_null() else 0.0
+
+                        # Print raw debug values and messages to terminal
+                        print(f"DEBUG raw:\n"
+                              f"  Speed: {speed_res.value} (raw: {speed_res.messages})\n"
+                              f"  RPM: {rpm_res.value} (raw: {rpm_res.messages})\n"
+                              f"  Temp: {temp_res.value} (raw: {temp_res.messages})\n"
+                              f"  Battery: {battery_res.value} (raw: {battery_res.messages})", flush=True)
 
                         self.signals.update_data.emit(speed_val, rpm_val, temp_val, battery_val, status_str)
                         
@@ -578,7 +614,7 @@ class OBDDashboardQT(QMainWindow):
                         if dtc_counter >= 50:
                             dtc_counter = 0
                             if getattr(self, 'error_log_filename', None):
-                                dtc_res = self.connection.query(cmd_dtc)
+                                dtc_res = self.connection.query(cmd_dtc, force=True)
                                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 try:
                                     with open(self.error_log_filename, "a") as f:
@@ -741,7 +777,7 @@ class OBDDashboardQT(QMainWindow):
             QLabel#StatusLabel {{ font-size: 11px; padding: 4px; }}
             
             /* Стилизация заголовков в сайдбаре */
-            QLabel[text="Select Port:"], QLabel[text="Select Baudrate:"] {{
+            QLabel[text="Select Port:"], QLabel[text="Select Baudrate:"], QLabel[text="Select Protocol:"] {{
                 color: #646b8a; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;
             }}
             
