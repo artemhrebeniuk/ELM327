@@ -383,7 +383,7 @@ class OBDDashboardQT(QMainWindow):
         sidebar_layout.addWidget(self.baud_label)
 
         self.baud_dropdown = QComboBox(sidebar)
-        self.baud_dropdown.addItems(["Auto (Scan)", "38400", "9600", "115200", "230400"])
+        self.baud_dropdown.addItems(["9600 (Kingbolen V1.5)", "38400 (ELM V2+)", "Auto (Scan)", "115200", "230400"])
         self.baud_dropdown.setFont(QFont(self.font_main, 12))
         self.baud_dropdown.hide()
         sidebar_layout.addWidget(self.baud_dropdown)
@@ -641,6 +641,7 @@ class OBDDashboardQT(QMainWindow):
             self.refresh_btn.show()
             self.baud_dropdown.show()
             self.baud_label.show()
+            self.baud_dropdown.setCurrentIndex(0)  # Дефолт: 9600 для Kingbolen V1.5
             self.refresh_ports()
 
     def refresh_ports(self):
@@ -651,35 +652,80 @@ class OBDDashboardQT(QMainWindow):
         self.status_val.setStyleSheet("color: #ffd700;")
         
         try:
-            ports = obd.scan_serial()
-            ports = [p for p in ports if "debug-console" not in p and "Bluetooth-Incoming" not in p]
-            
+            # ---------------------------------------------------------------
+            # ВАЖНО (macOS + Bluetooth):
+            # На macOS каждый BT-порт существует в двух вариантах:
+            #   /dev/tty.X  — требует DCD сигнал → зависает с BT адаптерами!
+            #   /dev/cu.X   — открывается сразу  → ПРАВИЛЬНЫЙ для BT OBD!
+            # Поэтому везде заменяем tty.* → cu.*
+            # ---------------------------------------------------------------
+            ports_raw = obd.scan_serial()
+            ports = []
+            for p in ports_raw:
+                # Фильтруем мусорные порты
+                if "debug-console" in p or "Bluetooth-Incoming" in p:
+                    continue
+                if sys.platform == 'darwin' and '/dev/tty.' in p:
+                    # Заменяем tty → cu (правильный BT порт на macOS)
+                    cu_port = p.replace('/dev/tty.', '/dev/cu.')
+                    if os.path.exists(cu_port):
+                        if cu_port not in ports:
+                            ports.append(cu_port)
+                            print(f"[PORT SCAN] BT: {p} → используем {cu_port}")
+                    else:
+                        if p not in ports:
+                            ports.append(p)
+                else:
+                    if p not in ports:
+                        ports.append(p)
+
             if sys.platform == 'darwin':
                 try:
-                    my_uid = os.getuid()
+                    # Ищем все /dev/cu.* с BT OBD ключевыми словами (cu = правильный!)
+                    potential_bt_cu = glob.glob('/dev/cu.*')
+                    for p in potential_bt_cu:
+                        kw = any(kw in p.lower() for kw in ["obd", "elm", "scan", "kingbolen"])
+                        skip = any(s in p.lower() for s in ["incoming", "modem", "debug", "console"])
+                        if kw and not skip and p not in ports:
+                            ports.insert(0, p)  # Ставим первым — наиболее вероятный BT адаптер
+                            print(f"[PORT SCAN] Найден BT адаптер: {p}")
+
+                    # Псевдотерминалы (PTY) для эмулятора
                     current_tty = ""
                     try:
                         current_tty = os.ttyname(sys.stdout.fileno())
                     except Exception:
                         pass
-                        
-                    user_ptys = [f for f in glob.glob('/dev/ttys[0-9]*') if os.stat(f).st_uid == my_uid]
+                    user_ptys = [f for f in glob.glob('/dev/ttys[0-9]*')
+                                 if os.path.exists(f) and os.stat(f).st_uid == os.getuid()]
                     for pty in user_ptys:
                         if pty != current_tty and pty not in ports:
                             ports.append(pty)
                 except Exception as pty_err:
                     print(f"Ошибка автопоиска PTY на macOS: {pty_err}")
+
+            print(f"[PORT SCAN] Найдено портов: {ports}")
             
             self.port_dropdown.clear()
             self.port_dropdown.addItem("Auto-Detect")
             self.port_dropdown.addItems(ports)
-            
+
+            # Автоматически выбираем cu.OBDII если он найден
+            for i in range(self.port_dropdown.count()):
+                if 'cu.' in self.port_dropdown.itemText(i) and 'obd' in self.port_dropdown.itemText(i).lower():
+                    self.port_dropdown.setCurrentIndex(i)
+                    print(f"[PORT SCAN] Автовыбор: {self.port_dropdown.itemText(i)}")
+                    break
+
             if self.demo_checkbox.isChecked():
                 self.status_val.setText("DEMO MODE ACTIVE")
                 self.status_val.setStyleSheet("color: #ffd700;")
             else:
-                self.status_val.setText("Ready to Connect")
-                self.status_val.setStyleSheet("color: #a0a0a0;")
+                count = self.port_dropdown.count() - 1  # minus Auto-Detect
+                msg = f"{count} port(s) found" if count > 0 else "No ports found"
+                self.status_val.setText(msg)
+                clr = "#2ecc71" if count > 0 else "#e06666"
+                self.status_val.setStyleSheet(f"color: {clr};")
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -770,6 +816,35 @@ class OBDDashboardQT(QMainWindow):
     def _log(self, msg):
         """Выводит сообщение в консоль и пытается отправить в UI"""
         print(msg, flush=True)
+
+    def _test_bt_raw(self, port, bauds_to_test):
+        """Проверяет что BT адаптер физически отвечает на ATZ команду.
+        Возвращает True если адаптер живой (ELM327 ответил), False если нет.
+        Это нужно потому что macOS создаёт /dev/cu.OBDII даже когда BT
+        спарен но не подключён — порт открывается, но читать нечего.
+        """
+        import serial as _serial
+        for baud in bauds_to_test:
+            try:
+                self._log(f"  🔵 Тест raw serial: {port} @ {baud} baud...")
+                s = _serial.Serial(port, baud, timeout=3)
+                time.sleep(0.5)
+                s.reset_input_buffer()
+                s.write(b"ATZ\r")
+                time.sleep(2.0)  # ELM327 нужно ~1-2 сек на сброс
+                response = s.read(128)
+                s.close()
+                self._log(f"  Raw response: {response!r}")
+                if response and (b"ELM" in response or b">" in response or b"ATZ" in response or b"OK" in response):
+                    self._log(f"  ✅ Адаптер отвечает на baud={baud}!")
+                    return True
+                elif response:
+                    self._log(f"  ⚠️  Ответ получен но непонятный (baud={baud}): {response!r}")
+                else:
+                    self._log(f"  ❌ Нет ответа @ baud={baud}")
+            except Exception as e:
+                self._log(f"  ❌ Ошибка открытия {port} @ {baud}: {e}")
+        return False
 
     def _try_query_did(self, did_bytes, header, description):
         """Пробует отправить одну UDS команду с указанным header.
@@ -974,7 +1049,11 @@ class OBDDashboardQT(QMainWindow):
             else:
                 selected_port = self.port_dropdown.currentText()
                 if selected_port == "Auto-Detect":
-                    ports_to_try = [self.port_dropdown.itemText(i) for i in range(1, self.port_dropdown.count())]
+                    all_ports = [self.port_dropdown.itemText(i) for i in range(1, self.port_dropdown.count())]
+                    # Фильтруем: для BT берём только cu.* (не псевдотерминалы ttys*)
+                    bt_ports = [p for p in all_ports if '/dev/cu.' in p]
+                    ports_to_try = bt_ports if bt_ports else all_ports
+                    self._log(f"🔍 BT Auto-Detect: пробуем {ports_to_try}")
                 else:
                     ports_to_try = [selected_port]
 
@@ -1001,44 +1080,86 @@ class OBDDashboardQT(QMainWindow):
                 else:
                     protocols_to_try = [None]
 
-                for proto_param in protocols_to_try:
+                # Для Bluetooth пробуем несколько baudrate если нужно
+                if not is_wifi:
+                    selected_baud = self.baud_dropdown.currentText()
+                    if "Auto" in selected_baud:
+                        # Пробуем оба популярных для ELM327 BT клонов
+                        bt_bauds_to_try = [38400, 9600]
+                    else:
+                        bt_bauds_to_try = [int(selected_baud.split()[0])]
+                else:
+                    bt_bauds_to_try = [None]  # для WiFi baudrate не нужен
+
+                # Предварительная BT диагностика: проверяем что порт отвечает на AT команды
+                if not is_wifi and '/dev/cu.' in port:
+                    self._log(f"\n🔵 BT диагностика: проверяем {port}...")
+                    bt_alive = self._test_bt_raw(port, bt_bauds_to_try)
+                    if not bt_alive:
+                        self._log(f"⚠️  BT порт {port} не отвечает на AT команды.")
+                        self._log(f"   Возможные причины:")
+                        self._log(f"   1. Адаптер не вставлен в OBD2 разъём (нет питания)")
+                        self._log(f"   2. Bluetooth не подключён: System Preferences → Bluetooth → OBDII → Connect")
+                        self._log(f"   3. Попробуй выбрать Baudrate: 38400 (ELM V2+)")
+                        self.signals.connection_failed.emit("BT adapter not responding. Check connection in System Prefs → Bluetooth")
+                        return
+                    self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
+
+                for baud_for_conn in bt_bauds_to_try:
+                  for proto_param in protocols_to_try:
                     if not self.is_running:
                         return
                     try:
                         if is_wifi:
-                            baud_param = 38400
+                            baud_param = None
+                            conn_timeout = 10.0
                         else:
-                            selected_baud = self.baud_dropdown.currentText()
-                            baud_param = None if "Auto" in selected_baud else int(selected_baud)
-                        
-                        proto_name_debug = f"Protocol: {proto_param}" if proto_param else "Protocol: Auto-Detect"
-                        self._log(f"🔌 Подключаемся к {port} ({proto_name_debug})...")
-                        self.connection = obd.OBD(portstr=port, baudrate=baud_param, protocol=proto_param, fast=False)
+                            baud_param = baud_for_conn
+                            conn_timeout = 8.0
+
+                        proto_name_debug = f"Protocol: {proto_param}" if proto_param else "Protocol: Auto"
+                        baud_str = str(baud_param) if baud_param else "auto"
+                        self._log(f"🔌 Подключаемся: {port} | baud={baud_str} | {proto_name_debug} | timeout={conn_timeout}s")
+
+                        self.connection = obd.OBD(
+                            portstr=port,
+                            baudrate=baud_param,
+                            protocol=proto_param,
+                            fast=False,
+                            timeout=conn_timeout
+                        )
                         
                         if self.connection.is_connected():
+                            proto_name = "?"
+                            try:
+                                proto_name = self.connection.protocol_name()
+                            except Exception:
+                                pass
                             self._log(f"✅ Подключение успешно: {port}")
-                            if hasattr(self.connection, 'protocol_name'):
-                                self._log(f"   Протокол: {self.connection.protocol_name()}")
+                            self._log(f"   Протокол: {proto_name}")
+                            self._log(f"   Адаптер: {self.connection.port_name()}")
                             connected = True
                             break
                         else:
-                            self._log(f"❌ Не удалось подключиться к {port} с протоколом {proto_param}")
+                            self._log(f"❌ Не удалось: {port} | baud={baud_str} | proto={proto_param}")
                             if self.connection:
                                 try:
                                     self.connection.close()
                                 except Exception:
                                     pass
                                 self.connection = None
-                            time.sleep(0.8) # Даем адаптеру остыть/сбросить сокет
+                            time.sleep(1.5)
                     except Exception as e:
-                        self._log(f"❌ Ошибка подключения к {port} ({proto_param}): {e}")
+                        self._log(f"❌ Ошибка: {port} ({proto_param}): {e}")
                         if self.connection:
                             try:
                                 self.connection.close()
                             except Exception:
                                 pass
                             self.connection = None
-                        time.sleep(0.8) # Даем адаптеру остыть/сбросить сокет
+                        time.sleep(1.5)
+                  if connected:
+                    break
                 
                 if connected:
                     break
