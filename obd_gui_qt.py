@@ -310,8 +310,13 @@ class OBDDashboardQT(QMainWindow):
         self.signals.connection_failed.connect(self.on_connection_failed)
         self.signals.update_odometer.connect(self.on_odometer_received)
 
-        self.font_main = "Avenir Next"
-        self.font_mono = "Menlo"
+        if sys.platform == "win32":
+            self.font_main = "Segoe UI"
+            self.font_mono = "Consolas"
+        else:
+            self.font_main = "Avenir Next"
+            self.font_mono = "Menlo"
+
 
         self.log_filename = None
         self.error_log_filename = None
@@ -331,7 +336,7 @@ class OBDDashboardQT(QMainWindow):
         # --- ЛЕВАЯ ПАНЕЛЬ ---
         sidebar = QFrame(self)
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(240)
+        sidebar.setFixedWidth(280)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(15, 20, 15, 20)
         sidebar_layout.setSpacing(15)
@@ -1646,10 +1651,16 @@ class OBDDashboardQT(QMainWindow):
                 color: #646b8a; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;
             }}
             
-            QComboBox, QLineEdit {{
+            QLineEdit {{
                 background-color: #1a1d29; color: #a1a7c4;
                 border: 1px solid #282c3e; border-radius: 8px; padding: 8px 12px;
             }}
+            
+            QComboBox {{
+                background-color: #1a1d29; color: #a1a7c4;
+                border: 1px solid #282c3e; border-radius: 8px; padding: 8px 30px 8px 12px;
+            }}
+            
             QComboBox {{
                 combobox-popup: 0;
             }}
@@ -1719,6 +1730,10 @@ class OBDDashboardQT(QMainWindow):
         """)
 
 if __name__ == "__main__":
+    # Enable High DPI scaling
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    
     app = QApplication(sys.argv)
     window = OBDDashboardQT()
     window.show()
