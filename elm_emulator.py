@@ -128,19 +128,7 @@ def handle_command(cmd, temp, start_time, headers_on, req_header):
     if cmd.startswith("22"):
         did = cmd[2:] # Например, 028C
         
-        # Разовые запросы пробега (Odometer)
-        if did == "2203": # DID 2203 (обычно 222203) - пробег в метрах
-            # Имитируем пробег 123456 км = 123456000 метров = 0x075BCA00
-            data = "62 22 03 07 5B CA 00"
-            return format_response(data, headers_on, req_header)
-        elif did == "2205": # DID 2205 (обычно 222205) - пробег в км
-            # 123456 км = 0x0001E240
-            data = "62 22 05 00 01 E2 40"
-            return format_response(data, headers_on, req_header)
-        elif did == "0902": # DID 0902 (обычно 220902) - пробег в км
-            data = "62 09 02 00 01 E2 40"
-            return format_response(data, headers_on, req_header)
-            
+
         # Симулируемые параметры EV
         # Скорость: wave-like от 0 до 150 км/ч
         speed = max(0.0, 75.0 + 65.0 * math.sin(t / 10.0))

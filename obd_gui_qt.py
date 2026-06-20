@@ -302,7 +302,6 @@ class OBDSignals(QObject):
     update_data = pyqtSignal(float, float, float, float, float, str)  # speed, hv_voltage, temp, battery_soc, current, status
     connection_failed = pyqtSignal(str)                       # error message
     log_message = pyqtSignal(str)                             # console log from background thread
-    update_odometer = pyqtSignal(float)                       # vehicle mileage
 
 class OBDDashboardQT(QMainWindow):
     def __init__(self):
@@ -319,7 +318,6 @@ class OBDDashboardQT(QMainWindow):
         self.signals = OBDSignals()
         self.signals.update_data.connect(self.on_data_received)
         self.signals.connection_failed.connect(self.on_connection_failed)
-        self.signals.update_odometer.connect(self.on_odometer_received)
 
         if sys.platform == "win32":
             self.font_main = "Segoe UI"
@@ -503,11 +501,7 @@ class OBDDashboardQT(QMainWindow):
         self.status_val.setStyleSheet("color: #a0a0a0;")
         self.status_val.setWordWrap(True)
         status_layout.addWidget(self.status_val)
-        
-        self.odo_val = QLabel("Odometer: ---", status_widget)
-        self.odo_val.setFont(QFont(self.font_main, 11, QFont.Bold))
-        self.odo_val.setStyleSheet("color: #a0a0a0;")
-        status_layout.addWidget(self.odo_val)
+
         
         sidebar_layout.addWidget(status_widget)
 
@@ -842,7 +836,6 @@ class OBDDashboardQT(QMainWindow):
             self.rpm_gauge.setValue(0)
             self.temp_gauge.setValue(0)
             self.battery_gauge.setValue(0)
-            self.odo_val.setText("Odometer: ---")
             
             if self.demo_checkbox.isChecked():
                 self.status_val.setText("DEMO MODE ACTIVE")
@@ -885,7 +878,6 @@ class OBDDashboardQT(QMainWindow):
 
             self.status_val.setText("Connecting...")
             self.status_val.setStyleSheet("color: #ffd700;")
-            self.odo_val.setText("Odometer: ---")
 
             self.polling_thread = threading.Thread(target=self.poll_obd_data, daemon=True)
             self.polling_thread.start()
@@ -934,17 +926,21 @@ class OBDDashboardQT(QMainWindow):
             )
             res = self.connection.query(probe_cmd, force=True)
             
+            # Если python-obd успешно распознал ответ
             if not res.is_null() and res.value is not None:
                 hex_str = " ".join(f"{b:02X}" for b in res.value)
                 return res.value, hex_str
-            else:
-                raw_msgs = res.messages if hasattr(res, 'messages') else []
-                hex_str = ""
-                if raw_msgs:
-                    for m in raw_msgs:
-                        if hasattr(m, 'data') and m.data:
-                            hex_str = " ".join(f"{b:02X}" for b in m.data)
-                return None, hex_str
+            
+            # ВАЖНО: Если python-obd считает ответ "null" (из-за несовпадения с его OBD схемой),
+            # но от адаптера пришли сырые сообщения — мы извлекаем из них данные напрямую!
+            raw_msgs = res.messages if hasattr(res, 'messages') else []
+            if raw_msgs:
+                for m in raw_msgs:
+                    if hasattr(m, 'data') and m.data:
+                        hex_str = " ".join(f"{b:02X}" for b in m.data)
+                        return m.data, hex_str
+            
+            return None, ""
         except Exception as e:
             return None, f"ERROR: {e}"
 
@@ -1101,68 +1097,7 @@ class OBDDashboardQT(QMainWindow):
         
         return 0.0
 
-    def on_odometer_received(self, mileage):
-        self.odo_val.setText(f"Odometer: {int(mileage):,} km".replace(",", " "))
 
-    def _query_odometer(self):
-        """Разовый запрос общего пробега автомобиля при подключении."""
-        self._log("\n🔍 Запрашиваем общий пробег автомобиля...")
-        
-        # Популярные DIDs пробега для VAG:
-        # 222203 (обычно в метрах на панели приборов 714)
-        # 222205 (в км на панели приборов 714)
-        # 220902 (в км на моторном блоке 7E0)
-        
-        odo_queries = [
-            (b"222203", b"714", "m"),     # 222203, ECU 17 (Instrument Cluster), в метрах
-            (b"222205", b"714", "km"),    # 222205, ECU 17, в км
-            (b"220902", b"7E0", "km"),    # 220902, ECU 01 (Engine/BMS), в км
-            (b"222203", b"7E0", "m"),     # 222203, ECU 01, в метрах
-        ]
-        
-        for did_bytes, header, unit in odo_queries:
-            if not self.is_running:
-                return None
-            
-            header_str = header.decode() if header else "default"
-            self._log(f"  ▶ Пробуем пробег DID {did_bytes.decode()} (header={header_str})...")
-            
-            data, hex_str = self._try_query_did(did_bytes, header, "Odometer Read")
-            
-            if data is not None and len(data) > 0:
-                is_valid = False
-                # UDS ответ: 62 [DID_H] [DID_L] [data...]
-                if data[0] == 0x62:
-                    payload = data[3:]
-                    is_valid = True
-                
-                if is_valid and len(payload) >= 1:
-                    self._log(f"  ✅ ОТВЕТ ПОЛУЧЕН: [{hex_str}]")
-                    try:
-                        # Декодируем пробег (обычно 3 или 4 байта)
-                        raw = 0
-                        for b in payload:
-                            raw = (raw << 8) + b
-                        
-                        # В зависимости от DID и юнита
-                        if unit == "m":
-                            # Если пробег в метрах
-                            mileage = raw / 1000.0
-                        else:
-                            # В километрах
-                            mileage = float(raw)
-                            
-                        # Если значение адекватное (например, от 1.0 до 2 000 000 км)
-                        if 1.0 < mileage < 2000000.0:
-                            self._log(f"🎉 Пробег успешно определен: {mileage:.1f} км")
-                            return mileage
-                    except Exception as e:
-                        self._log(f"  ❌ Ошибка декодирования пробега: {e}")
-            
-            time.sleep(0.1)
-        
-        self._log("⚠️  Не удалось считать пробег по UDS.")
-        return None
 
     def poll_obd_data(self):
         is_demo = self.demo_checkbox.isChecked()
@@ -1299,11 +1234,6 @@ class OBDDashboardQT(QMainWindow):
 
             if connected:
                 try:
-                    # Разовый запрос пробега при подключении
-                    mileage = self._query_odometer()
-                    if mileage is not None:
-                        self.signals.update_odometer.emit(mileage)
-                        
                     status_str = f"Connected on {self.connection.port_name()}"
                     
                     is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
