@@ -651,6 +651,9 @@ class OBDDashboardQT(QMainWindow):
 
         main_layout.addWidget(dashboard, 1)
 
+        # Initialize defaults based on the default selected profile
+        self.on_vehicle_profile_changed(self.vehicle_profile_dropdown.currentIndex())
+
     def on_vehicle_profile_changed(self, index):
         is_ev = (index == 0)
         if is_ev:
@@ -670,6 +673,9 @@ class OBDDashboardQT(QMainWindow):
             self.temp_gauge.setValue(0)
             self.battery_gauge.setValue(0)
             self.rpm_gauge.setColor("#ffaa00")
+            # Автоматически ставим протокол CAN 11-bit 500k (Audi)
+            if hasattr(self, 'proto_dropdown'):
+                self.proto_dropdown.setCurrentIndex(1)
         else:
             self.rpm_title.setText("⚡ ENGINE RPM")
             self.rpm_title.setStyleSheet("color: #00fa9a;")
@@ -687,6 +693,9 @@ class OBDDashboardQT(QMainWindow):
             self.temp_gauge.setValue(0)
             self.battery_gauge.setValue(0)
             self.rpm_gauge.setColor("#00fa9a")
+            # Автоматически ставим протокол Auto
+            if hasattr(self, 'proto_dropdown'):
+                self.proto_dropdown.setCurrentIndex(0)
 
     def add_shadow(self, widget):
         shadow = QGraphicsDropShadowEffect(self)
@@ -1104,86 +1113,116 @@ class OBDDashboardQT(QMainWindow):
 
         if is_demo:
             self.run_demo_loop()
+            return
+
+        conn_type_idx = self.conn_type_dropdown.currentIndex()
+        is_wifi_conn = (conn_type_idx == 0)
+        is_bt_conn = (conn_type_idx == 1)
+
+        # --- Generate Protocol List ---
+        selected_proto = self.proto_dropdown.currentText()
+        if "Auto" in selected_proto:
+            protocols_to_try = [None, "6", "7", "8", "9", "3", "4", "5"]
+        elif "CAN 11-bit 500k" in selected_proto:
+            protocols_to_try = ["6"]
+        elif "CAN 29-bit 500k" in selected_proto:
+            protocols_to_try = ["7"]
+        elif "CAN 11-bit 250k" in selected_proto:
+            protocols_to_try = ["8"]
         else:
-            is_wifi = (self.conn_type_dropdown.currentIndex() == 0)
-            
-            if is_wifi:
-                wifi_addr = self.wifi_input.text().strip()
-                if wifi_addr and not wifi_addr.startswith("socket://"):
-                    actual_port = f"socket://{wifi_addr}"
-                else:
-                    actual_port = wifi_addr
-                ports_to_try = [actual_port]
-            else:
-                selected_port = self.port_dropdown.currentText()
-                if selected_port == "Auto-Detect":
-                    all_ports = [self.port_dropdown.itemText(i) for i in range(1, self.port_dropdown.count())]
-                    # Фильтруем: для BT берём только cu.* (не псевдотерминалы ttys*)
-                    bt_ports = [p for p in all_ports if '/dev/cu.' in p]
-                    ports_to_try = bt_ports if bt_ports else all_ports
-                    self._log(f"🔍 BT Auto-Detect: пробуем {ports_to_try}")
-                else:
-                    ports_to_try = [selected_port]
+            protocols_to_try = [None]
 
-            if not ports_to_try:
-                self._log("❌ Нет доступных COM-портов для подключения.")
-                self.signals.connection_failed.emit("No COM ports found")
-                return
+        # --- Generate Wi-Fi Port List ---
+        wifi_addr = self.wifi_input.text().strip()
+        if not wifi_addr:
+            wifi_addr = "192.168.0.10:35000"
+        actual_wifi_port = f"socket://{wifi_addr}" if not wifi_addr.startswith("socket://") else wifi_addr
 
-            connected = False
-            for port in ports_to_try:
-                if not self.is_running:
-                    return
-                
-                selected_proto = self.proto_dropdown.currentText()
-                if "Auto" in selected_proto:
-                    # Попробуем автодетекцию, а если не выйдет - переберем популярные CAN-протоколы вручную
-                    protocols_to_try = [None, "6", "7", "8", "9", "3", "4", "5"]
-                elif "CAN 11-bit 500k" in selected_proto:
-                    protocols_to_try = ["6"]
-                elif "CAN 29-bit 500k" in selected_proto:
-                    protocols_to_try = ["7"]
-                elif "CAN 11-bit 250k" in selected_proto:
-                    protocols_to_try = ["8"]
-                else:
-                    protocols_to_try = [None]
-
-                # Для Bluetooth пробуем несколько baudrate если нужно
-                if not is_wifi:
-                    selected_baud = self.baud_dropdown.currentText()
-                    if "Auto" in selected_baud:
-                        # Пробуем оба популярных для ELM327 BT клонов
-                        bt_bauds_to_try = [38400, 9600]
+        # --- Generate BT Port List ---
+        bt_ports_to_try = []
+        if is_bt_conn and self.port_dropdown.currentText() == "Auto-Detect":
+            import sys, glob, os
+            self._log("🔍 Автопоиск BT портов в фоне...")
+            try:
+                ports_raw = obd.scan_serial()
+                for p in ports_raw:
+                    if "debug-console" in p or "Bluetooth-Incoming" in p: continue
+                    if sys.platform == 'darwin' and '/dev/tty.' in p:
+                        cu_port = p.replace('/dev/tty.', '/dev/cu.')
+                        if os.path.exists(cu_port) and cu_port not in bt_ports_to_try:
+                            bt_ports_to_try.append(cu_port)
                     else:
-                        bt_bauds_to_try = [int(selected_baud.split()[0])]
-                else:
-                    bt_bauds_to_try = [None]  # для WiFi baudrate не нужен
+                        if p not in bt_ports_to_try:
+                            bt_ports_to_try.append(p)
+                if sys.platform == 'darwin':
+                    for p in glob.glob('/dev/cu.*'):
+                        kw = any(kw in p.lower() for kw in ["obd", "elm", "scan", "kingbolen"])
+                        skip = any(s in p.lower() for s in ["incoming", "modem", "debug", "console"])
+                        if kw and not skip and p not in bt_ports_to_try:
+                            bt_ports_to_try.insert(0, p)
+            except Exception as e:
+                self._log(f"Ошибка при сканировании портов: {e}")
+        else:
+            bt_ports_to_try = [self.port_dropdown.currentText()]
 
-                # Предварительная BT диагностика: проверяем что порт отвечает на AT команды
-                if not is_wifi and '/dev/cu.' in port:
-                    self._log(f"\n🔵 BT диагностика: проверяем {port}...")
-                    bt_alive = self._test_bt_raw(port, bt_bauds_to_try)
-                    if not bt_alive:
-                        self._log(f"⚠️  BT порт {port} не отвечает на AT команды.")
-                        self._log(f"   Возможные причины:")
-                        self._log(f"   1. Адаптер не вставлен в OBD2 разъём (нет питания)")
-                        self._log(f"   2. Bluetooth не подключён: System Preferences → Bluetooth → OBDII → Connect")
-                        self._log(f"   3. Попробуй выбрать Baudrate: 38400 (ELM V2+)")
+        # --- Generate BT Baudrates List ---
+        if is_bt_conn:
+            selected_baud = self.baud_dropdown.currentText()
+            if "Auto" in selected_baud:
+                bt_bauds_to_try = [38400, 9600]
+            else:
+                bt_bauds_to_try = [int(selected_baud.split()[0])]
+        else:
+            bt_bauds_to_try = [38400, 9600]
+
+        # --- Build configs list ---
+        configs_to_try = []
+        if is_wifi_conn:
+            configs_to_try.append({'port': actual_wifi_port, 'bauds': [None], 'protos': protocols_to_try, 'is_wifi': True})
+        elif is_bt_conn:
+            if not bt_ports_to_try:
+                self._log("❌ Нет доступных BT-портов для подключения.")
+                self.signals.connection_failed.emit("No BT ports found")
+                return
+            for p in bt_ports_to_try:
+                configs_to_try.append({'port': p, 'bauds': bt_bauds_to_try, 'protos': protocols_to_try, 'is_wifi': False})
+
+        if not configs_to_try:
+            self._log("❌ Нет конфигураций для подключения.")
+            self.signals.connection_failed.emit("No connection configurations")
+            return
+
+        connected = False
+        
+        for config in configs_to_try:
+            if connected or not self.is_running:
+                break
+            
+            port = config['port']
+            is_wifi = config['is_wifi']
+            
+            # Предварительная BT диагностика
+            if not is_wifi and '/dev/cu.' in port:
+                self._log(f"\n🔵 BT диагностика: проверяем {port}...")
+                bt_alive = self._test_bt_raw(port, config['bauds'])
+                if not bt_alive:
+                    self._log(f"⚠️  BT порт {port} не отвечает на AT команды.")
+                    # В авторежиме просто пробуем следующий порт
+                    if len(bt_ports_to_try) == 1:
                         self.signals.connection_failed.emit("BT adapter not responding. Check connection in System Prefs → Bluetooth")
                         return
-                    self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
+                    continue
+                self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
 
-                for baud_for_conn in bt_bauds_to_try:
-                  for proto_param in protocols_to_try:
-                    if not self.is_running:
-                        return
+            for baud_for_conn in config['bauds']:
+                if connected or not self.is_running:
+                    break
+                for proto_param in config['protos']:
+                    if connected or not self.is_running:
+                        break
                     try:
-                        if is_wifi:
-                            baud_param = None
-                            conn_timeout = 10.0
-                        else:
-                            baud_param = baud_for_conn
-                            conn_timeout = 8.0
+                        baud_param = None if is_wifi else baud_for_conn
+                        conn_timeout = 10.0 if is_wifi else 8.0
 
                         proto_name_debug = f"Protocol: {proto_param}" if proto_param else "Protocol: Auto"
                         baud_str = str(baud_param) if baud_param else "auto"
@@ -1216,7 +1255,7 @@ class OBDDashboardQT(QMainWindow):
                                 except Exception:
                                     pass
                                 self.connection = None
-                            time.sleep(1.5)
+                            time.sleep(1.0)
                     except Exception as e:
                         self._log(f"❌ Ошибка: {port} ({proto_param}): {e}")
                         if self.connection:
@@ -1225,172 +1264,167 @@ class OBDDashboardQT(QMainWindow):
                             except Exception:
                                 pass
                             self.connection = None
-                        time.sleep(1.5)
-                  if connected:
-                    break
-                
-                if connected:
-                    break
+                        time.sleep(1.0)
 
-            if connected:
-                try:
-                    status_str = f"Connected on {self.connection.port_name()}"
+        if connected:
+            try:
+                status_str = f"Connected on {self.connection.port_name()}"
                     
-                    is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
+                is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
                     
-                    if is_ev:
-                        # ============ ФАЗА 1: СКАНИРОВАНИЕ (UDS EV) ============
-                        self.signals.update_data.emit(0, 0, 0, 0, 150000.0, "Scanning EV commands...")
-                        working_cmds = self._scan_working_commands()
+                if is_ev:
+                    # ============ ФАЗА 1: СКАНИРОВАНИЕ (UDS EV) ============
+                    self.signals.update_data.emit(0, 0, 0, 0, 150000.0, "Scanning EV commands...")
+                    working_cmds = self._scan_working_commands()
                         
-                        if not self.is_running:
-                            return
+                    if not self.is_running:
+                        return
                         
-                        active_commands = {}
-                        decoders = {
-                            "speed": _decode_raw_passthrough,
-                            "soc": _decode_raw_passthrough,
-                            "voltage": _decode_raw_passthrough,
-                            "temp": _decode_raw_passthrough,
-                            "current": _decode_raw_passthrough,
-                        }
-                        for param_name, info in working_cmds.items():
-                            cmd = OBDCommand(
-                                f"EV_{param_name.upper()}", info['desc'],
-                                info['did'], 8, decoders[param_name], ECU.ALL, False,
-                                header=info['header']
-                            )
-                            active_commands[param_name] = cmd
+                    active_commands = {}
+                    decoders = {
+                        "speed": _decode_raw_passthrough,
+                        "soc": _decode_raw_passthrough,
+                        "voltage": _decode_raw_passthrough,
+                        "temp": _decode_raw_passthrough,
+                        "current": _decode_raw_passthrough,
+                    }
+                    for param_name, info in working_cmds.items():
+                        cmd = OBDCommand(
+                            f"EV_{param_name.upper()}", info['desc'],
+                            info['did'], 8, decoders[param_name], ECU.ALL, False,
+                            header=info['header']
+                        )
+                        active_commands[param_name] = cmd
                         
-                        has_any_data = len(active_commands) > 0
+                    has_any_data = len(active_commands) > 0
                         
-                        if not has_any_data:
-                            self._log("\n⚠️  Переходим в режим стандартных OBD-II PIDs (fallback)...")
-                            status_str = "Connected (no EV data — standard OBD)"
-                        else:
-                            found_names = ", ".join(active_commands.keys())
-                            status_str = f"EV Mode: {found_names}"
-                            self._log(f"\n🚀 Начинаем опрос: {found_names}")
+                    if not has_any_data:
+                        self._log("\n⚠️  Переходим в режим стандартных OBD-II PIDs (fallback)...")
+                        status_str = "Connected (no EV data — standard OBD)"
                     else:
-                        has_any_data = False
-                        status_str = "Connected (Standard ICE)"
-                        self._log(f"\n🚀 Начинаем опрос (Standard OBD-II): RPM, Speed, Temp, Fuel")
+                        found_names = ", ".join(active_commands.keys())
+                        status_str = f"EV Mode: {found_names}"
+                        self._log(f"\n🚀 Начинаем опрос: {found_names}")
+                else:
+                    has_any_data = False
+                    status_str = "Connected (Standard ICE)"
+                    self._log(f"\n🚀 Начинаем опрос (Standard OBD-II): RPM, Speed, Temp, Fuel")
                     
-                    # ============ ФАЗА 2: ЦИКЛИЧЕСКИЙ ОПРОС ============
-                    poll_count = 0
-                    dtc_counter = 0
+                # ============ ФАЗА 2: ЦИКЛИЧЕСКИЙ ОПРОС ============
+                poll_count = 0
+                dtc_counter = 0
                     
-                    while self.is_running:
-                        speed_val = 0.0
-                        voltage_val = 0.0
-                        temp_val = 0.0
-                        soc_val = 0.0
-                        range_val = 0.0
-                        current_val = 150000.0
+                while self.is_running:
+                    speed_val = 0.0
+                    voltage_val = 0.0
+                    temp_val = 0.0
+                    soc_val = 0.0
+                    range_val = 0.0
+                    current_val = 150000.0
                         
-                        if has_any_data:
-                            # Опрос через кастомные UDS команды
-                            for param_name, cmd in active_commands.items():
-                                if not self.is_running:
-                                    break
+                    if has_any_data:
+                        # Опрос через кастомные UDS команды
+                        for param_name, cmd in active_commands.items():
+                            if not self.is_running:
+                                break
                                     
-                                res = self.connection.query(cmd, force=True)
-                                time.sleep(0.01)
+                            res = self.connection.query(cmd, force=True)
+                            time.sleep(0.01)
                                 
-                                if not res.is_null() and res.value is not None:
-                                    val = self._decode_response(param_name, res.value)
-                                    hex_str = " ".join(f"{b:02X}" for b in res.value) if res.value else "empty"
+                            if not res.is_null() and res.value is not None:
+                                val = self._decode_response(param_name, res.value)
+                                hex_str = " ".join(f"{b:02X}" for b in res.value) if res.value else "empty"
                                     
-                                    if param_name == "speed":
-                                        speed_val = val
-                                    elif param_name == "soc":
-                                        soc_val = val
-                                    elif param_name == "voltage":
-                                        voltage_val = val
-                                    elif param_name == "temp":
-                                        temp_val = val
-                                    elif param_name == "current":
-                                        current_val = val
+                                if param_name == "speed":
+                                    speed_val = val
+                                elif param_name == "soc":
+                                    soc_val = val
+                                elif param_name == "voltage":
+                                    voltage_val = val
+                                elif param_name == "temp":
+                                    temp_val = val
+                                elif param_name == "current":
+                                    current_val = val
                                     
-                                    # Подробный debug каждые 10 циклов
-                                    if poll_count % 10 == 0:
-                                        self._log(f"  {param_name}: {val:.1f} (raw: [{hex_str}])")
-                                else:
-                                    if poll_count % 10 == 0:
-                                        self._log(f"  {param_name}: NO DATA")
+                                # Подробный debug каждые 10 циклов
+                                if poll_count % 10 == 0:
+                                    self._log(f"  {param_name}: {val:.1f} (raw: [{hex_str}])")
+                            else:
+                                if poll_count % 10 == 0:
+                                    self._log(f"  {param_name}: NO DATA")
                                         
+                    else:
+                        # Стандартный OBD-II (ДВС или Fallback)
+                        speed_res = self.connection.query(obd.commands.SPEED, force=True)
+                        time.sleep(0.01)
+                            
+                        # Для ДВС пишем RPM во второй прибор
+                        if not is_ev:
+                            rpm_res = self.connection.query(obd.commands.RPM, force=True)
+                            voltage_val = rpm_res.value.magnitude if not rpm_res.is_null() and rpm_res.value is not None else 0.0
                         else:
-                            # Стандартный OBD-II (ДВС или Fallback)
-                            speed_res = self.connection.query(obd.commands.SPEED, force=True)
-                            time.sleep(0.01)
+                            voltage_res = self.connection.query(obd.commands.CONTROL_MODULE_VOLTAGE, force=True)
+                            voltage_val = voltage_res.value.magnitude if not voltage_res.is_null() and voltage_res.value is not None else 0.0
+                        time.sleep(0.01)
                             
-                            # Для ДВС пишем RPM во второй прибор
-                            if not is_ev:
-                                rpm_res = self.connection.query(obd.commands.RPM, force=True)
-                                voltage_val = rpm_res.value.magnitude if not rpm_res.is_null() and rpm_res.value is not None else 0.0
-                            else:
-                                voltage_res = self.connection.query(obd.commands.CONTROL_MODULE_VOLTAGE, force=True)
-                                voltage_val = voltage_res.value.magnitude if not voltage_res.is_null() and voltage_res.value is not None else 0.0
-                            time.sleep(0.01)
+                        temp_res = self.connection.query(obd.commands.COOLANT_TEMP, force=True)
+                        time.sleep(0.01)
                             
-                            temp_res = self.connection.query(obd.commands.COOLANT_TEMP, force=True)
-                            time.sleep(0.01)
+                        # Для ДВС пишем Напряжение бортовой сети в четвертый прибор
+                        if not is_ev:
+                            volt_res = self.connection.query(obd.commands.CONTROL_MODULE_VOLTAGE, force=True)
+                            soc_val = volt_res.value.magnitude if not volt_res.is_null() and volt_res.value is not None else 0.0
+                        else:
+                            soc_res = self.connection.query(obd.commands.HYBRID_BATTERY_REMAINING, force=True)
+                            soc_val = soc_res.value.magnitude if not soc_res.is_null() and soc_res.value is not None else 0.0
+                        time.sleep(0.01)
                             
-                            # Для ДВС пишем Напряжение бортовой сети в четвертый прибор
-                            if not is_ev:
-                                volt_res = self.connection.query(obd.commands.CONTROL_MODULE_VOLTAGE, force=True)
-                                soc_val = volt_res.value.magnitude if not volt_res.is_null() and volt_res.value is not None else 0.0
-                            else:
-                                soc_res = self.connection.query(obd.commands.HYBRID_BATTERY_REMAINING, force=True)
-                                soc_val = soc_res.value.magnitude if not soc_res.is_null() and soc_res.value is not None else 0.0
-                            time.sleep(0.01)
+                        speed_val = speed_res.value.magnitude if not speed_res.is_null() and speed_res.value is not None else 0.0
+                        temp_val = temp_res.value.magnitude if not temp_res.is_null() and temp_res.value is not None else 0.0
+                        current_val = 150000.0
                             
-                            speed_val = speed_res.value.magnitude if not speed_res.is_null() and speed_res.value is not None else 0.0
-                            temp_val = temp_res.value.magnitude if not temp_res.is_null() and temp_res.value is not None else 0.0
-                            current_val = 150000.0
-                            
-                            if poll_count % 10 == 0:
-                                self._log(f"DEBUG (standard OBD):\n"
-                                          f"  Speed: {speed_val:.1f} | RPM/Volt: {voltage_val:.1f}\n"
-                                          f"  Temp: {temp_val:.1f} | Fuel/SOC: {soc_val:.1f}")
-
-                        self.signals.update_data.emit(speed_val, voltage_val, temp_val, soc_val, current_val, status_str)
+                        if poll_count % 10 == 0:
+                            self._log(f"DEBUG (standard OBD):\n"
+                                      f"  Speed: {speed_val:.1f} | RPM/Volt: {voltage_val:.1f}\n"
+                                      f"  Temp: {temp_val:.1f} | Fuel/SOC: {soc_val:.1f}")
+    
+                    self.signals.update_data.emit(speed_val, voltage_val, temp_val, soc_val, current_val, status_str)
                         
-                        # DTC scan
-                        dtc_counter += 1
-                        if dtc_counter >= 50:
-                            dtc_counter = 0
-                            if getattr(self, 'error_log_filename', None):
-                                try:
-                                    dtc_res = self.connection.query(obd.commands.GET_DTC, force=True)
-                                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    with open(self.error_log_filename, "a") as f:
-                                        if not dtc_res.is_null() and len(dtc_res.value) > 0:
-                                            errors = ", ".join([f"{code[0]} ({code[1]})" for code in dtc_res.value])
-                                            f.write(f"[{timestamp}] Errors: {errors}\n")
-                                        else:
-                                            f.write(f"[{timestamp}] No errors found.\n")
-                                except Exception:
-                                    pass
-
-                        poll_count += 1
-                        time.sleep(0.15)
+                    # DTC scan
+                    dtc_counter += 1
+                    if dtc_counter >= 50:
+                        dtc_counter = 0
+                        if getattr(self, 'error_log_filename', None):
+                            try:
+                                dtc_res = self.connection.query(obd.commands.GET_DTC, force=True)
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                with open(self.error_log_filename, "a") as f:
+                                    if not dtc_res.is_null() and len(dtc_res.value) > 0:
+                                        errors = ", ".join([f"{code[0]} ({code[1]})" for code in dtc_res.value])
+                                        f.write(f"[{timestamp}] Errors: {errors}\n")
+                                    else:
+                                        f.write(f"[{timestamp}] No errors found.\n")
+                            except Exception:
+                                pass
+    
+                    poll_count += 1
+                    time.sleep(0.15)
                         
-                except Exception as e:
-                    import traceback
-                    self._log(f"\n❌ ОШИБКА: {e}")
-                    traceback.print_exc()
-                    self.signals.connection_failed.emit(f"Error: {str(e)}")
-                finally:
-                    if self.connection:
-                        try:
-                            self.connection.close()
-                        except Exception:
-                            pass
-                        self.connection = None
-            else:
-                self.signals.connection_failed.emit("Connection Failed — check adapter")
-
+            except Exception as e:
+                import traceback
+                self._log(f"\n❌ ОШИБКА: {e}")
+                traceback.print_exc()
+                self.signals.connection_failed.emit(f"Error: {str(e)}")
+            finally:
+                if self.connection:
+                    try:
+                        self.connection.close()
+                    except Exception:
+                        pass
+                    self.connection = None
+        else:
+            self.signals.connection_failed.emit("Connection Failed — check adapter")
+    
     def run_demo_loop(self):
         """Демо-режим: симулирует электромобиль (скорость, HV напряжение, температура батареи, SOC)"""
         is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
