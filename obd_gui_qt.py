@@ -165,13 +165,28 @@ class CircularGauge(QWidget):
     def __init__(self, parent=None, max_value=100, color="#00fa9a"):
         super().__init__(parent)
         self.max_value = max_value
-        self.current_value = 0
+        self.current_value = 0.0
+        self.target_value = 0.0
         self.gauge_color = QColor(color)
         self.setMinimumSize(250, 250)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16) # ~60 FPS
+        self._anim_timer.timeout.connect(self._animate)
 
     def setValue(self, value):
-        self.current_value = min(max(value, 0), self.max_value)
+        self.target_value = min(max(value, 0), self.max_value)
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+
+    def _animate(self):
+        diff = self.target_value - self.current_value
+        if abs(diff) < 0.1:
+            self.current_value = self.target_value
+            self._anim_timer.stop()
+        else:
+            self.current_value += diff * 0.1
         self.update()
 
     def setColor(self, color_str):
@@ -253,13 +268,28 @@ class LinearGauge(QWidget):
     def __init__(self, parent=None, max_value=100, color="#ff5e62"):
         super().__init__(parent)
         self.max_value = max_value
-        self.current_value = 0
+        self.current_value = 0.0
+        self.target_value = 0.0
         self.gauge_color = QColor(color)
         self.setMinimumHeight(40)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16) # ~60 FPS
+        self._anim_timer.timeout.connect(self._animate)
+
     def setValue(self, value):
-        self.current_value = min(max(value, 0), self.max_value)
+        self.target_value = min(max(value, 0), self.max_value)
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+
+    def _animate(self):
+        diff = self.target_value - self.current_value
+        if abs(diff) < 0.1:
+            self.current_value = self.target_value
+            self._anim_timer.stop()
+        else:
+            self.current_value += diff * 0.1
         self.update()
 
     def paintEvent(self, event):
@@ -653,6 +683,9 @@ class OBDDashboardQT(QMainWindow):
 
         # Initialize defaults based on the default selected profile
         self.on_vehicle_profile_changed(self.vehicle_profile_dropdown.currentIndex())
+        
+        # Default connection type to Bluetooth
+        self.conn_type_dropdown.setCurrentIndex(1)
 
     def on_vehicle_profile_changed(self, index):
         is_ev = (index == 0)
@@ -737,7 +770,8 @@ class OBDDashboardQT(QMainWindow):
             #   /dev/cu.X   — открывается сразу  → ПРАВИЛЬНЫЙ для BT OBD!
             # Поэтому везде заменяем tty.* → cu.*
             # ---------------------------------------------------------------
-            ports_raw = obd.scan_serial()
+            import serial.tools.list_ports
+            ports_raw = [p.device for p in serial.tools.list_ports.comports()]
             ports = []
             for p in ports_raw:
                 # Фильтруем мусорные порты
@@ -1144,7 +1178,8 @@ class OBDDashboardQT(QMainWindow):
             import sys, glob, os
             self._log("🔍 Автопоиск BT портов в фоне...")
             try:
-                ports_raw = obd.scan_serial()
+                import serial.tools.list_ports
+                ports_raw = [p.device for p in serial.tools.list_ports.comports()]
                 for p in ports_raw:
                     if "debug-console" in p or "Bluetooth-Incoming" in p: continue
                     if sys.platform == 'darwin' and '/dev/tty.' in p:
