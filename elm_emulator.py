@@ -12,19 +12,20 @@ def run_emulator(port):
     print("=" * 60)
 
     try:
-        # Открываем порт эмулятора. 
+        # Открываем порт эмулятора.
         # Настройки по умолчанию для ELM327: скорость 38400 бод, 8 бит данных, без четности, 1 стоп-бит
         ser = serial.Serial(port, baudrate=38400, timeout=1)
     except Exception as e:
         print(f"\n[ОШИБКА] Не удалось открыть порт {port}: {e}")
-        print("Убедитесь, что вы создали виртуальную пару портов (например, через com0com)")
+        print("Убедитесь, что вы создали виртуальную пару портов (например, через com0com или socat)")
         return
 
     buffer = ""
     engine_temp = 50.0  # Начальная температура двигателя для эмуляции
     start_time = time.time()
     headers_on = False  # Флаг заголовков (ATH1/ATH0)
-    
+    current_header = "7E0"  # Текущий CAN-заголовок (по умолчанию Engine ECU)
+
     try:
         while True:
             if ser.in_waiting > 0:
@@ -48,16 +49,20 @@ def run_emulator(port):
                         cmd_clean = cmd.replace(" ", "")
                         print(f"📥 [Получен запрос]: '{cmd}'")
                         
-                        # Отслеживаем состояние заголовков
+                        # Отслеживаем состояние заголовков и текущий CAN-заголовок
                         if cmd_clean == "ATH1":
                             headers_on = True
                         elif cmd_clean == "ATH0":
                             headers_on = False
                         elif cmd_clean == "ATZ":
                             headers_on = False
+                            current_header = "7E0"
+                        elif cmd_clean.startswith("ATSH"):
+                            current_header = cmd_clean[4:]
+                            print(f"   ℹ️ Установлен CAN-заголовок запроса: {current_header}")
                         
-                        # Генерируем ответ OBD-II
-                        response = handle_command(cmd_clean, engine_temp, start_time, headers_on)
+                        # Генерируем ответ OBD-II / UDS
+                        response = handle_command(cmd_clean, engine_temp, start_time, headers_on, current_header)
                         
                         # Имитируем небольшую задержку ответа реального ЭБУ (50 мс)
                         time.sleep(0.05)
@@ -79,95 +84,178 @@ def run_emulator(port):
         ser.close()
         print("🔌 Порт закрыт.")
 
-def handle_command(cmd, temp, start_time, headers_on):
+def format_response(payload_hex, headers_on, req_header):
     """
-    Разбирает входящие AT-команды ELM327 и стандартные OBD-II запросы PIDs (Mode 01).
-    Возвращает строку ответа в формате ELM327 с приглашением к вводу '>' на конце.
+    Форматирует ответ от ЭБУ в соответствии с флагом заголовков (ATH0/ATH1).
+    Автоматически рассчитывает ответный CAN-заголовок и длину payload.
     """
-    # 1. Базовые команды инициализации ELM327
-    if cmd == "ATZ":  # Сброс адаптера
+    if not headers_on:
+        return f"{payload_hex}\r\r>"
+    
+    # Расчет ответного CAN-заголовка (для VAG обычно Request Header + 8 в hex)
+    try:
+        req_val = int(req_header, 16)
+        resp_val = req_val + 8
+        resp_header = f"{resp_val:03X}"
+    except Exception:
+        resp_header = "7E8"
+        
+    # Расчет длины данных в байтах
+    clean_payload = payload_hex.replace(" ", "")
+    num_bytes = len(clean_payload) // 2
+    
+    return f"{resp_header} {num_bytes:02X} {payload_hex}\r\r>"
+
+def handle_command(cmd, temp, start_time, headers_on, req_header):
+    """
+    Разбирает входящие AT-команды ELM327, стандартные OBD-II запросы PIDs (Mode 01),
+    запрос ошибок (Mode 03) и низкоуровневые UDS-запросы Service 0x22 (Read Data By Identifier).
+    """
+    # 1. Базовые команды инициализации ELM327 (выполняются самим чипом ELM327, без заголовков)
+    if cmd == "ATZ":
         return "ELM327 v1.5\r\r>"
-    elif cmd == "ATRV":  # Чтение напряжения аккумулятора
+    elif cmd == "ATRV":
         return "12.4V\r\r>"
-    elif cmd == "ATDPN":  # Чтение текущего протокола
+    elif cmd == "ATDPN":
         return "A6\r\r>"
-    elif cmd.startswith("AT"):  # Любые настройки (ATE0, ATL0, ATH0, ATSP и т.д.)
+    elif cmd.startswith("AT"):
         return "OK\r\r>"
+        
+    t = time.time() - start_time
     
-    # 2. Стандартные запросы параметров OBD-II (Режим 01)
-    # Ответ должен иметь формат: 41 + PID + Данные в HEX + \r\r>
-    
-    # Запрос 0100: Поддерживаемые PIDs 1-20
-    # Отправляем байты, подтверждающие поддержку: RPM (0C), Speed (0D), Coolant Temp (05), Throttle (11)
-    if cmd == "0100":
+    # 2. Низкоуровневые UDS запросы Service 0x22 (Read Data By Identifier)
+    # Формат ответа: 62 + DID + Данные
+    if cmd.startswith("22"):
+        did = cmd[2:] # Например, 028C
+        
+        # Разовые запросы пробега (Odometer)
+        if did == "2203": # DID 2203 (обычно 222203) - пробег в метрах
+            # Имитируем пробег 123456 км = 123456000 метров = 0x075BCA00
+            data = "62 22 03 07 5B CA 00"
+            return format_response(data, headers_on, req_header)
+        elif did == "2205": # DID 2205 (обычно 222205) - пробег в км
+            # 123456 км = 0x0001E240
+            data = "62 22 05 00 01 E2 40"
+            return format_response(data, headers_on, req_header)
+        elif did == "0902": # DID 0902 (обычно 220902) - пробег в км
+            data = "62 09 02 00 01 E2 40"
+            return format_response(data, headers_on, req_header)
+            
+        # Симулируемые параметры EV
+        # Скорость: wave-like от 0 до 150 км/ч
+        speed = max(0.0, 75.0 + 65.0 * math.sin(t / 10.0))
+        # Заряд батареи (SOC): медленно падает с 85%
+        cycle = (t // 30) % 2 # 0 = разгон, 1 = рекуперация
+        base_soc = 85.0 - (t / 60.0) % 15.0
+        soc = base_soc + (0.5 if cycle == 1 else 0.0)
+        # Напряжение HV батареи (V)
+        voltage = 396.0 - (speed / 150.0) * 20.0 + random.uniform(-1, 1)
+        # Температура батареи (°C)
+        battery_temp = 22.0 + 3.0 * math.sin(t / 80.0)
+        # Ток батареи (A)
+        if cycle == 0:
+            current_amps = - (speed / 150.0) * 150.0 - random.uniform(0, 5)
+        else:
+            current_amps = (speed / 150.0) * 80.0 + random.uniform(0, 3) if speed > 0 else -1.0
+        # Преобразуем ток в сырое значение (offset = 150000, 100A = 10000)
+        current_raw = int(150000.0 + current_amps * 100.0)
+        
+        # Декодируем и отдаем параметры в зависимости от запрошенного DID
+        if did in ["F40D", "0281"]: # Скорость (22F40D или 220281)
+            raw_speed = int(speed * 100)
+            a = (raw_speed >> 8) & 0xFF
+            b = raw_speed & 0xFF
+            data = f"62 {did[:2]} {did[2:]} {a:02X} {b:02X}"
+            return format_response(data, headers_on, req_header)
+            
+        elif did in ["028C", "F45B"]: # SOC (22028C или 22F45B)
+            raw_soc = int(soc)
+            data = f"62 {did[:2]} {did[2:]} {raw_soc:02X}"
+            return format_response(data, headers_on, req_header)
+            
+        elif did == "0289" or did == "4800" or did.startswith("1E3B") or did.startswith("01EB") or did.startswith("1D3B") or did.startswith("742F") or did.startswith("029A"): # Напряжение HV
+            # VAG HV Voltage (DID 1E3B) имеет делитель 10.0, остальные 4.0
+            if did.startswith("1E3B"):
+                raw_volts = int(voltage * 10)
+            else:
+                raw_volts = int(voltage * 4)
+            a = (raw_volts >> 8) & 0xFF
+            b = raw_volts & 0xFF
+            did_h = did[:2]
+            did_l = did[2:]
+            data = f"62 {did_h} {did_l} {a:02X} {b:02X}"
+            return format_response(data, headers_on, req_header)
+            
+        elif did.startswith("1EB1") or did == "028B" or did.startswith("1E3F") or did.startswith("1E34") or did == "F405": # Температура
+            # VAG Battery Temp (1EB1): Формула A - 100. Остальные A - 40.
+            if did.startswith("1EB1"):
+                raw_temp = int(battery_temp + 100) & 0xFF
+            else:
+                raw_temp = int(battery_temp + 40) & 0xFF
+            did_h = did[:2]
+            did_l = did[2:]
+            data = f"62 {did_h} {did_l} {raw_temp:02X}"
+            return format_response(data, headers_on, req_header)
+            
+        elif did.startswith("1E3D") or did == "028A" or did.startswith("1E3C") or did.startswith("01EC"): # Ток
+            a = (current_raw >> 16) & 0xFF
+            b = (current_raw >> 8) & 0xFF
+            c = current_raw & 0xFF
+            did_h = did[:2]
+            did_l = did[2:]
+            data = f"62 {did_h} {did_l} {a:02X} {b:02X} {c:02X}"
+            return format_response(data, headers_on, req_header)
+            
+        else:
+            # Для других DID возвращаем пустой UDS ответ с кодом 62 + DID + 00
+            did_h = did[:2]
+            did_l = did[2:]
+            data = f"62 {did_h} {did_l} 00"
+            return format_response(data, headers_on, req_header)
+
+    # 3. Запрос кодов ошибок DTC (Режим 03)
+    elif cmd == "03":
+        # Возвращаем симулированные ошибки P0101 и P0300 для логгера
+        data = "43 01 01 03 00"
+        return format_response(data, headers_on, req_header)
+
+    # 4. Стандартные запросы параметров OBD-II (Режим 01)
+    elif cmd == "0100":
         data = "41 00 BE 3E A8 13"
-        if headers_on:
-            return f"7E8 06 {data}\r\r>"
-        return f"{data}\r\r>"
-    
-    # Запрос 010C: Обороты двигателя (Engine RPM)
-    # Формула OBD: ((A * 256) + B) / 4. Мы кодируем обороты обратно в байты.
-    elif cmd == "010C":
-        t = time.time() - start_time
-        # Генерируем волнообразные обороты от 1000 до 5500 rpm
+        return format_response(data, headers_on, req_header)
+        
+    elif cmd == "0101":
+        data = "41 01 00 07 E5 A5"
+        return format_response(data, headers_on, req_header)
+        
+    elif cmd == "010C": # RPM ДВС
         rpm = int(3000 + 2000 * math.sin(t / 5.0))
         hex_val = int(rpm * 4)
         a = (hex_val >> 8) & 0xFF
         b = hex_val & 0xFF
         data = f"41 0C {a:02X} {b:02X}"
-        if headers_on:
-            return f"7E8 04 {data}\r\r>"
-        return f"{data}\r\r>"
+        return format_response(data, headers_on, req_header)
         
-    # Запрос 010D: Скорость автомобиля (Vehicle Speed)
-    # Формула OBD: значение в км/ч совпадает с байтом A.
-    elif cmd == "010D":
-        t = time.time() - start_time
-        # Скорость меняется волнообразно от 40 до 140 км/ч
+    elif cmd == "010D": # Скорость автомобиля ДВС
         speed = int(90 + 50 * math.sin(t / 8.0))
         data = f"41 0D {speed:02X}"
-        if headers_on:
-            return f"7E8 03 {data}\r\r>"
-        return f"{data}\r\r>"
+        return format_response(data, headers_on, req_header)
         
-    # Запрос 0105: Температура охлаждающей жидкости (Coolant Temp)
-    # Формула OBD: A - 40. Кодируем обратно: байт A = temp + 40
-    elif cmd == "0105":
+    elif cmd == "0105": # Температура ДВС
         hex_temp = int(temp + 40) & 0xFF
         data = f"41 05 {hex_temp:02X}"
-        if headers_on:
-            return f"7E8 03 {data}\r\r>"
-        return f"{data}\r\r>"
+        return format_response(data, headers_on, req_header)
         
-    # Запрос 0140: Поддерживаемые PIDs 41-60
-    # Подтверждаем поддержку: Hybrid battery pack remaining life (5B)
     elif cmd == "0140":
         data = "41 40 00 00 00 20"
-        if headers_on:
-            return f"7E8 06 {data}\r\r>"
-        return f"{data}\r\r>"
+        return format_response(data, headers_on, req_header)
         
-    # Запрос 015B: Оставшийся заряд батареи гибрида/электромобиля (Hybrid battery pack remaining life)
-    # Формула OBD: A * 100 / 255. Кодируем обратно.
-    elif cmd == "015B":
-        t = time.time() - start_time
-        # Симулируем медленный разряд батареи со стартовых 85%
-        cycle = (t // 30) % 2
-        base_charge = 85.0 - (t / 60.0) % 15.0
-        
-        # Симулируем рекуперацию при торможении (добавим заряд)
-        if cycle == 1:
-            charge = base_charge + 0.5
-        else:
-            charge = base_charge
-            
-        hex_charge = int(charge * 255 / 100) & 0xFF
+    elif cmd == "015B": # SOC гибридной батареи
+        soc_val = max(15.0, 85.0 - (t / 60.0) % 15.0)
+        hex_charge = int(soc_val * 255 / 100) & 0xFF
         data = f"41 5B {hex_charge:02X}"
-        if headers_on:
-            return f"7E8 03 {data}\r\r>"
-        return f"{data}\r\r>"
+        return format_response(data, headers_on, req_header)
 
-    # Остальные PIDs возвращаем как неподдерживаемые
     else:
         return "NO DATA\r\r>"
 
