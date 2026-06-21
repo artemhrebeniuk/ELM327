@@ -1288,6 +1288,9 @@ class OBDDashboardQT(QMainWindow):
                         return
                     continue
                 self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
+                if sys.platform == 'win32':
+                    self._log("⏳ Пауза 2.5 сек для полного освобождения Bluetooth-канала в ОС Windows...")
+                    time.sleep(2.5)
 
             for baud_for_conn in config['bauds']:
                 if connected or not self.is_running:
