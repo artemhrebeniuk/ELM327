@@ -1208,7 +1208,6 @@ class OBDDashboardQT(QMainWindow):
         # --- Generate BT Port List ---
         bt_ports_to_try = []
         if is_bt_conn and self.port_dropdown.currentText() == "Auto-Detect":
-            import sys, glob, os
             self._log("🔍 Автопоиск BT портов в фоне...")
             try:
                 import serial.tools.list_ports
