@@ -10,32 +10,11 @@ PS C:\Users\artem\Documents\ELM327> & C:/Users/artem/AppData/Local/Programs/Pyth
 
 🔵 BT диагностика: проверяем COM6...
   🔵 Тест raw serial: COM6 @ 9600 baud...
-  ❌ Открытие порта COM6 зависло (вероятно, оффлайн/incoming Bluetooth-порт). Пропускаем.
-⚠️  BT порт COM6 не отвечает на AT команды.
-[PORT SCAN] Найдено портов: ['COM5', 'COM6']
-[PORT SCAN] Найдено портов: ['COM5', 'COM6']
-[PORT SCAN] Найдено портов: ['COM5', 'COM6']
+  Raw response: b'ATZ\r\r\rELM327 v1.5\r\r>'
+  ✅ Адаптер отвечает на baud=9600!
+✅ BT адаптер отвечает! Продолжаем подключение...
 
-🔵 BT диагностика: проверяем COM6...
-  🔵 Тест raw serial: COM6 @ 9600 baud...
-  ❌ Открытие порта COM6 зависло (вероятно, оффлайн/incoming Bluetooth-порт). Пропускаем.
-⚠️  BT порт COM6 не отвечает на AT команды.
-PS C:\Users\artem\Documents\ELM327> & C:/Users/artem/AppData/Local/Programs/Python/Python313/python.exe c:/Users/artem/Documents/ELM327/obd_gui_qt.py
-[PORT SCAN] Найдено портов: ['COM5', 'COM6']
-[PORT SCAN] Найдено портов: ['COM5', 'COM6']
-🔍 Автопоиск BT портов в фоне...
-
-🔵 BT диагностика: проверяем COM5...
-  🔵 Тест raw serial: COM5 @ 9600 baud...
-  ❌ Ошибка обмена с COM5 @ 9600: Write timeout
-⚠️  BT порт COM5 не отвечает на AT команды.
-
-🔵 BT диагностика: проверяем COM6...
-  🔵 Тест raw serial: COM6 @ 9600 baud...
-  ❌ Открытие порта COM6 зависло (вероятно, оффлайн/incoming Bluetooth-порт). Пропускаем.
-⚠️  BT порт COM6 не отвечает на AT команды.
-
-🔵 BT диагностика: проверяем COM6...
-  🔵 Тест raw serial: COM6 @ 9600 baud...
-  ❌ Открытие порта COM6 зависло (вероятно, оффлайн/incoming Bluetooth-порт). Пропускаем.
-⚠️  BT порт COM6 не отвечает на AT команды.
+🔌 Подключаемся: COM6 | baud=9600 | Protocol: 6 | timeout=8.0s
+[obd.elm327] could not open port 'COM6': OSError(22, 'The semaphore timeout period has expired.', None, 121)
+[obd.obd] Cannot load commands: No connection to car
+❌ Не удалось: COM6 | baud=9600 | proto=6
