@@ -932,30 +932,63 @@ class OBDDashboardQT(QMainWindow):
     def _test_bt_raw(self, port, bauds_to_test):
         """Проверяет что BT адаптер физически отвечает на ATZ команду.
         Возвращает True если адаптер живой (ELM327 ответил), False если нет.
-        Это нужно потому что macOS создаёт /dev/cu.OBDII даже когда BT
-        спарен но не подключён — порт открывается, но читать нечего.
         """
         import serial as _serial
+        import threading
+
+        def attempt_open(target_port, target_baud, result_dict):
+            try:
+                # Открываем порт с коротким таймаутом на чтение/запись
+                s = _serial.Serial(target_port, target_baud, timeout=1.0, write_timeout=1.0)
+                result_dict['serial'] = s
+            except Exception as e:
+                result_dict['error'] = e
+
         for baud in bauds_to_test:
             try:
                 self._log(f"  🔵 Тест raw serial: {port} @ {baud} baud...")
-                s = _serial.Serial(port, baud, timeout=3)
-                time.sleep(0.5)
-                s.reset_input_buffer()
-                s.write(b"ATZ\r")
-                time.sleep(2.0)  # ELM327 нужно ~1-2 сек на сброс
-                response = s.read(128)
-                s.close()
-                self._log(f"  Raw response: {response!r}")
-                if response and (b"ELM" in response or b">" in response or b"ATZ" in response or b"OK" in response):
-                    self._log(f"  ✅ Адаптер отвечает на baud={baud}!")
-                    return True
-                elif response:
-                    self._log(f"  ⚠️  Ответ получен но непонятный (baud={baud}): {response!r}")
-                else:
-                    self._log(f"  ❌ Нет ответа @ baud={baud}")
+                res_dict = {}
+                # Запускаем открытие в фоновом потоке, так как на Windows оффлайн/incoming BT-порты намертво вешают поток открытия
+                t = threading.Thread(target=attempt_open, args=(port, baud, res_dict))
+                t.daemon = True
+                t.start()
+                t.join(timeout=1.5) # Ждем максимум 1.5 секунды
+
+                if t.is_alive():
+                    self._log(f"  ❌ Открытие порта {port} зависло (вероятно, оффлайн/incoming Bluetooth-порт). Пропускаем.")
+                    continue
+
+                if 'error' in res_dict:
+                    self._log(f"  ❌ Ошибка открытия {port} @ {baud}: {res_dict['error']}")
+                    continue
+
+                s = res_dict.get('serial')
+                if not s:
+                    continue
+
+                try:
+                    time.sleep(0.2)
+                    s.reset_input_buffer()
+                    s.write(b"ATZ\r")
+                    time.sleep(0.8)  # Даем ELM327 время ответить
+                    response = s.read(128)
+                    s.close()
+                    self._log(f"  Raw response: {response!r}")
+                    if response and any(x in response for x in [b"ELM", b">", b"ATZ", b"OK"]):
+                        self._log(f"  ✅ Адаптер отвечает на baud={baud}!")
+                        return True
+                    elif response:
+                        self._log(f"  ⚠️  Ответ получен но непонятный (baud={baud}): {response!r}")
+                    else:
+                        self._log(f"  ❌ Нет ответа @ baud={baud}")
+                except Exception as e:
+                    self._log(f"  ❌ Ошибка обмена с {port} @ {baud}: {e}")
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
             except Exception as e:
-                self._log(f"  ❌ Ошибка открытия {port} @ {baud}: {e}")
+                self._log(f"  ❌ Ошибка теста {port} @ {baud}: {e}")
         return False
 
     def _try_query_did(self, did_bytes, header, description):
@@ -1236,15 +1269,23 @@ class OBDDashboardQT(QMainWindow):
             port = config['port']
             is_wifi = config['is_wifi']
             
-            # Предварительная BT диагностика
-            if not is_wifi and '/dev/cu.' in port:
+            # Предварительная BT диагностика (для macOS и Windows COM-портов)
+            is_bt_port = False
+            if sys.platform == 'darwin' and '/dev/cu.' in port:
+                is_bt_port = True
+            elif sys.platform == 'win32' and port.upper().startswith('COM'):
+                is_bt_port = True
+            elif sys.platform.startswith('linux') and ('ttyUSB' in port or 'ttyS' in port or 'rfcomm' in port):
+                is_bt_port = True
+
+            if not is_wifi and is_bt_port:
                 self._log(f"\n🔵 BT диагностика: проверяем {port}...")
                 bt_alive = self._test_bt_raw(port, config['bauds'])
                 if not bt_alive:
                     self._log(f"⚠️  BT порт {port} не отвечает на AT команды.")
                     # В авторежиме просто пробуем следующий порт
                     if len(bt_ports_to_try) == 1:
-                        self.signals.connection_failed.emit("BT adapter not responding. Check connection in System Prefs → Bluetooth")
+                        self.signals.connection_failed.emit("BT adapter not responding. Check connection in System Settings / Device Manager")
                         return
                     continue
                 self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
