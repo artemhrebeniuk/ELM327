@@ -1,0 +1,14 @@
+PS C:\Users\artem\Documents\ELM327> & C:/Users/artem/AppData/Local/Programs/Python/Python313/python.exe c:/Users/artem/Documents/ELM327/obd_gui_qt.py
+[PORT SCAN] Найдено портов: ['COM5', 'COM6']
+[PORT SCAN] Найдено портов: ['COM5', 'COM6']
+
+🔵 Предварительная диагностика: проверяем COM6...
+  🔵 Тест raw serial: COM6 @ 9600 baud...
+  Raw response: b'ATZ\r\r\rELM327 v1.5\r\r>'
+  ✅ Адаптер отвечает на baud=9600!
+✅ Адаптер отвечает! Продолжаем подключение...
+
+🔌 Подключаемся: COM6 | baud=9600 | Protocol: 6 | timeout=8.0s
+[obd.elm327] could not open port 'COM6': OSError(22, 'The semaphore timeout period has expired.', None, 121)
+[obd.obd] Cannot load commands: No connection to car
+❌ Не удалось: COM6 | baud=9600 | proto=6
