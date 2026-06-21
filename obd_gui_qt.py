@@ -937,6 +937,7 @@ class OBDDashboardQT(QMainWindow):
         """
         import serial as _serial
         for baud in bauds_to_test:
+            s = None
             try:
                 self._log(f"  🔵 Тест raw serial: {port} @ {baud} baud...")
                 s = _serial.Serial(port, baud, timeout=3)
@@ -945,7 +946,6 @@ class OBDDashboardQT(QMainWindow):
                 s.write(b"ATZ\r")
                 time.sleep(2.0)  # ELM327 нужно ~1-2 сек на сброс
                 response = s.read(128)
-                s.close()
                 self._log(f"  Raw response: {response!r}")
                 if response and (b"ELM" in response or b">" in response or b"ATZ" in response or b"OK" in response):
                     self._log(f"  ✅ Адаптер отвечает на baud={baud}!")
@@ -956,6 +956,9 @@ class OBDDashboardQT(QMainWindow):
                     self._log(f"  ❌ Нет ответа @ baud={baud}")
             except Exception as e:
                 self._log(f"  ❌ Ошибка открытия {port} @ {baud}: {e}")
+            finally:
+                if s is not None and s.is_open:
+                    s.close()
         return False
 
     def _try_query_did(self, did_bytes, header, description):
@@ -1248,6 +1251,9 @@ class OBDDashboardQT(QMainWindow):
                         return
                     continue
                 self._log(f"✅ Адаптер отвечает! Продолжаем подключение...\n")
+                if sys.platform == 'win32':
+                    self._log("  ⏳ (Windows) Ждем освобождения COM-порта...")
+                    time.sleep(2.0)
 
             for baud_for_conn in config['bauds']:
                 if connected or not self.is_running:
