@@ -1236,18 +1236,18 @@ class OBDDashboardQT(QMainWindow):
             port = config['port']
             is_wifi = config['is_wifi']
             
-            # Предварительная BT диагностика
-            if not is_wifi and '/dev/cu.' in port:
-                self._log(f"\n🔵 BT диагностика: проверяем {port}...")
+            # Предварительная диагностика Serial (Bluetooth/USB) портов
+            if not is_wifi:
+                self._log(f"\n🔵 Предварительная диагностика: проверяем {port}...")
                 bt_alive = self._test_bt_raw(port, config['bauds'])
                 if not bt_alive:
-                    self._log(f"⚠️  BT порт {port} не отвечает на AT команды.")
+                    self._log(f"⚠️  Порт {port} не отвечает на AT команды.")
                     # В авторежиме просто пробуем следующий порт
                     if len(bt_ports_to_try) == 1:
-                        self.signals.connection_failed.emit("BT adapter not responding. Check connection in System Prefs → Bluetooth")
+                        self.signals.connection_failed.emit("Адаптер не отвечает. Проверьте подключение в настройках Bluetooth/USB.")
                         return
                     continue
-                self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
+                self._log(f"✅ Адаптер отвечает! Продолжаем подключение...\n")
 
             for baud_for_conn in config['bauds']:
                 if connected or not self.is_running:
