@@ -1124,14 +1124,19 @@ class OBDDashboardQT(QMainWindow):
                         else:
                             return val * 100.0 / 255.0
                 elif param_name == "speed":
+                    # Если это стандартная скорость проброшенная через UDS (DID F40D)
+                    if data[1] == 0xF4 and data[2] == 0x0D and len(payload) >= 1:
+                        return float(payload[0])  # 1 байт = 1 км/ч
+                    
+                    # Если это проприетарная скорость Audi (DID 0281)
                     if len(payload) >= 2:
                         raw = payload[0] * 256 + payload[1]
                         val = raw / 100.0
-                        if val > 300:  # Если значение абсурдно большое — пробуем другую формулу
-                            val = payload[0]  # Может быть просто один байт = km/h
+                        if val > 300:  # Защита от бредовых значений
+                            val = payload[0]
                         return float(val)
                     elif len(payload) >= 1:
-                        return float(payload[0])  # Один байт = прямое значение km/h
+                        return float(payload[0])
                 elif param_name == "voltage":
                     if len(payload) >= 2:
                         raw = payload[0] * 256 + payload[1]
