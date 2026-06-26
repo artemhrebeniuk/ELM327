@@ -24,7 +24,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QFrame, QGridLayout, QCheckBox, QSizePolicy, QGraphicsDropShadowEffect)
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject, QRectF
-from PyQt5.QtGui import QFont, QPainter, QPen, QColor, QBrush
+from PyQt5.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
 
 # ============================================================================
 #  КАСТОМНЫЕ UDS КОМАНДЫ ДЛЯ ЭЛЕКТРОМОБИЛЕЙ (Audi E-tron и подобные)
@@ -341,6 +341,12 @@ class OBDDashboardQT(QMainWindow):
         self.setGeometry(100, 100, 1280, 800)
         self.setMinimumSize(1000, 650)
 
+        # Set window icon
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(script_dir, "logo.jpeg")
+        if os.path.exists(logo_path):
+            self.setWindowIcon(QIcon(logo_path))
+
         self.connection = None
         self.polling_thread = None
         self.is_running = False
@@ -359,6 +365,10 @@ class OBDDashboardQT(QMainWindow):
 
         self.log_filename = None
         self.error_log_filename = None
+
+        # UDP Socket for IPC (Video Player)
+        self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_addr = ("127.0.0.1", 28765)
 
         self.init_ui()
         self.apply_dark_theme()
@@ -1542,9 +1552,9 @@ class OBDDashboardQT(QMainWindow):
             if cycle == 0:
                 # Разгон
                 if current_speed < 130:
-                    current_speed += random.uniform(0.3, 0.8)
+                    current_speed += random.uniform(0.1, 0.3)
                 else:
-                    current_speed = 130 + random.uniform(-2, 2)
+                    current_speed = 130 + random.uniform(-1, 1)
                 
                 if is_ev:
                     current_voltage = 396.0 - (current_speed / 130.0) * 20.0 + random.uniform(-2, 2)
@@ -1564,7 +1574,7 @@ class OBDDashboardQT(QMainWindow):
                     sim_current_amps = 0.0
             else:
                 # Торможение
-                current_speed -= 0.5
+                current_speed -= 0.2
                 if current_speed < 0:
                     current_speed = 0
 
@@ -1607,6 +1617,12 @@ class OBDDashboardQT(QMainWindow):
             time.sleep(0.05)
 
     def on_data_received(self, speed, val2, temp, val4, current, status):
+        # IPC broadcast to standalone video player
+        try:
+            self.udp_sock.sendto(f"{speed}".encode('utf-8'), self.udp_addr)
+        except Exception:
+            pass
+
         is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
 
         if self.log_filename:
