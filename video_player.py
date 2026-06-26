@@ -7,7 +7,7 @@ import numpy as np
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QSlider, QComboBox, QFileDialog, QSizePolicy, QProgressBar, QGraphicsDropShadowEffect, QListView)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QRect, QRectF, QPoint, QPointF
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QRect, QRectF, QPoint, QPointF, QObject, QEvent, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QFont, QColor, QLinearGradient, QPen, QBrush, QPainterPath, QPolygon, QIcon
 
 APP_STYLESHEET = """
@@ -25,54 +25,54 @@ QMainWindow {
 
 #header_label, #slider_label {
     color: #94A3B8; 
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 800;
     letter-spacing: 1.5px;
 }
 
 #val_label {
     color: #E0F2FE; /* Sky 100 */
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 900;
-    min-width: 45px;
+    min-width: 55px;
 }
 
 #info_panel {
     background-color: rgba(30, 41, 59, 200);
-    border-radius: 12px; /* Standardize */
+    border-radius: 14px; /* Standardize */
     border: 1px solid rgba(56, 189, 248, 80);
 }
 
 #speed_val {
     color: #FFFFFF;
-    font-size: 34px;
+    font-size: 24px;
     font-weight: 900;
     letter-spacing: 1px;
 }
 
 #speed_unit {
     color: #38BDF8; /* Sky 400 */
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 900;
-    margin-top: 12px;
+    margin-top: 6px;
     letter-spacing: 1px;
 }
 
 #frame_val {
     color: #94A3B8;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 800;
     font-family: monospace;
-    margin-top: 10px;
+    margin-top: 4px;
 }
 
 #action_btn {
     background-color: rgba(30, 41, 59, 255); 
     color: #F8FAFC;
     border: 1px solid rgba(255, 255, 255, 30);
-    border-radius: 12px; /* Standardize */
-    padding: 10px 18px; /* Align to 40px total height */
-    font-size: 14px;
+    border-radius: 14px;
+    padding: 14px 28px;
+    font-size: 18px;
     font-weight: 800;
     letter-spacing: 0.5px;
 }
@@ -83,9 +83,9 @@ QMainWindow {
     background-color: rgba(14, 165, 233, 20); /* Transparent Blue */
     color: #38BDF8;
     border: 1px solid #38BDF8;
-    border-radius: 12px; /* Standardize */
-    padding: 10px 18px; /* Align to 40px total height */
-    font-size: 14px;
+    border-radius: 14px;
+    padding: 14px 28px;
+    font-size: 18px;
     font-weight: 900;
     letter-spacing: 0.5px;
 }
@@ -99,9 +99,9 @@ QMainWindow {
     background-color: rgba(30, 41, 59, 255); 
     color: #F8FAFC;
     border: 1px solid rgba(255, 255, 255, 30);
-    border-radius: 12px;
-    padding: 10px 18px;
-    font-size: 14px;
+    border-radius: 14px;
+    padding: 14px 28px;
+    font-size: 18px;
     font-weight: 800;
     letter-spacing: 0.5px;
 }
@@ -122,9 +122,9 @@ QComboBox {
     background-color: rgba(30, 41, 59, 255);
     color: #F8FAFC;
     border: 1px solid rgba(255, 255, 255, 30);
-    border-radius: 12px; /* Standardize with buttons */
-    padding: 10px 15px; /* Align to 40px total height */
-    font-size: 14px;
+    border-radius: 14px;
+    padding: 14px 28px;
+    font-size: 18px;
     font-weight: 800;
 }
 QComboBox:hover { border-color: #38BDF8; background-color: #1E293B; }
@@ -149,9 +149,9 @@ QComboBox QAbstractItemView {
     padding: 4px;
 }
 QComboBox QAbstractItemView::item {
-    min-height: 32px;
-    padding-left: 10px;
-    border-radius: 6px;
+    min-height: 38px;
+    padding-left: 12px;
+    border-radius: 8px;
     margin: 2px;
 }
 QComboBox QAbstractItemView::item:selected {
@@ -160,33 +160,33 @@ QComboBox QAbstractItemView::item:selected {
 }
 
 QSlider {
-    min-height: 34px;
+    min-height: 40px;
 }
 QSlider::groove:horizontal {
     border: none;
-    height: 8px;
-    background: #0F172A;
-    border-radius: 4px;
+    height: 10px;
+    background: rgba(255, 255, 255, 30); /* Make inactive track more visible */
+    border-radius: 5px;
 }
 QSlider::sub-page:horizontal {
     background: #38BDF8; /* Sky 400 */
-    border-radius: 4px;
+    border-radius: 5px;
 }
 QSlider::handle:horizontal {
     background: #FFFFFF;
     border: 2px solid #38BDF8;
-    width: 16px;
-    height: 16px;
-    margin: -6px 0;
-    border-radius: 10px;
+    width: 20px;
+    height: 20px;
+    margin: -7px 0;
+    border-radius: 12px;
 }
 QSlider::handle:horizontal:hover {
     background: #E0F2FE;
     border: 4px solid #0284C7;
-    width: 18px;
-    height: 18px;
-    margin: -9px -1px;
-    border-radius: 13px;
+    width: 22px;
+    height: 22px;
+    margin: -10px -1px;
+    border-radius: 15px;
 }
 
 QProgressBar {
@@ -391,7 +391,7 @@ class VideoLoader(QThread):
                 if not ret:
                     break
                     
-                # Compress frame to JPEG in memory (100% quality for exact copy without RAM OOM)
+                # Compress frame to JPEG in memory (100% quality — visually lossless, saves ~10x RAM vs raw PNG)
                 success, encoded = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
                 if success:
                     cache.append(encoded.tobytes())
@@ -399,7 +399,13 @@ class VideoLoader(QThread):
                 frame_idx += 1
                 if frame_idx % 5 == 0:
                     prog = min(100, int((frame_idx / total_frames) * 100))
-                    ram_mb = (len(cache) * len(cache[-1])) / (1024 * 1024) if cache else 0
+                    # Accurate RAM estimation: sum actual sizes of last N frames and extrapolate
+                    if cache:
+                        sample = cache[-min(5, len(cache)):]
+                        avg_size = sum(len(b) for b in sample) / len(sample)
+                        ram_mb = (len(cache) * avg_size) / (1024 * 1024)
+                    else:
+                        ram_mb = 0
                     self.progress_updated.emit(prog, f"Loading frames into RAM... {prog}% ({ram_mb:.0f} MB)")
             
             cap.release()
@@ -494,77 +500,84 @@ class PlaybackThread(QThread):
         while self.is_running:
             start_time = time.time()
             
+            # Acquire lock for state computation only (no sleep inside lock)
+            target = -1
+            jpeg_bytes = None
+            c_speed = 0.0
+            c_total = 0
+            
             with self.lock:
                 if self.total_frames == 0 or not self.frames_cache:
-                    time.sleep(0.01)
-                    continue
-                
-                dt = 0.016 # ~60fps target
-                
-                # Save previous interpolated speed to calculate acceleration
-                self.last_speed = self.current_speed
-                
-                # 1. Smoothly interpolate raw speed based on time elapsed since the last UDP packet
-                if self.packet_received_time > 0:
-                    t_elapsed = time.time() - self.packet_received_time
-                    if self.average_packet_interval > 0:
-                        fraction = min(1.0, t_elapsed / self.average_packet_interval)
-                    else:
-                        fraction = 1.0
-                    self.current_speed = self.last_raw_speed + (self.target_raw_speed - self.last_raw_speed) * fraction
+                    pass  # Will sleep outside lock below
                 else:
-                    self.current_speed = self.target_raw_speed
-                
-                # 2. Apply standard exponential smoothing (EMA) on top to filter out high-frequency noise
-                self.smoothed_speed += (self.current_speed - self.smoothed_speed) * self.smoothing_alpha
-                base_rate = self.fps * dt
-                
-                if self.mode == 0:
-                    acceleration = self.current_speed - self.last_speed
-                    if abs(acceleration) < 0.005: # Lower threshold since interpolated speed changes smoothly
-                        direction = 1.0
+                    dt = 0.016 # ~60fps target
+                    
+                    # Save previous interpolated speed to calculate acceleration
+                    self.last_speed = self.current_speed
+                    
+                    # 1. Smoothly interpolate raw speed based on time elapsed since the last UDP packet
+                    if self.packet_received_time > 0:
+                        t_elapsed = time.time() - self.packet_received_time
+                        if self.average_packet_interval > 0:
+                            fraction = min(1.0, t_elapsed / self.average_packet_interval)
+                        else:
+                            fraction = 1.0
+                        self.current_speed = self.last_raw_speed + (self.target_raw_speed - self.last_raw_speed) * fraction
                     else:
-                        direction = 1.0 if acceleration >= 0 else -1.0
-                        
-                    # Non-linear speed scaling: smooths out high speeds
-                    # 30 km/h = 1.0x multiplier, 100 km/h = ~2.2x multiplier (instead of 10x)
-                    speed_multiplier = (self.smoothed_speed / 30.0) ** 0.65
-                    delta_frames = base_rate * speed_multiplier * self.sensitivity * direction
-                elif self.mode == 1:
-                    speed_multiplier = (self.smoothed_speed / 30.0) ** 0.65
-                    delta_frames = base_rate * speed_multiplier * self.sensitivity
-                else: # Mode 2: Autoplay (Loop)
-                    if self.autoplay_playing:
-                        delta_frames = base_rate * self.sensitivity
+                        self.current_speed = self.target_raw_speed
+                    
+                    # 2. Apply standard exponential smoothing (EMA) on top to filter out high-frequency noise
+                    self.smoothed_speed += (self.current_speed - self.smoothed_speed) * self.smoothing_alpha
+                    base_rate = self.fps * dt
+                    
+                    if self.mode == 0:
+                        acceleration = self.current_speed - self.last_speed
+                        if abs(acceleration) < 0.005: # Lower threshold since interpolated speed changes smoothly
+                            direction = 1.0
+                        else:
+                            direction = 1.0 if acceleration >= 0 else -1.0
+                            
+                        # Non-linear speed scaling: smooths out high speeds
+                        # 30 km/h = 1.0x multiplier, 100 km/h = ~2.2x multiplier (instead of 10x)
+                        speed_multiplier = (self.smoothed_speed / 30.0) ** 0.65
+                        delta_frames = base_rate * speed_multiplier * self.sensitivity * direction
+                    elif self.mode == 1:
+                        speed_multiplier = (self.smoothed_speed / 30.0) ** 0.65
+                        delta_frames = base_rate * speed_multiplier * self.sensitivity
+                    else: # Mode 2: Autoplay (Loop)
+                        if self.autoplay_playing:
+                            delta_frames = base_rate * self.sensitivity
+                        else:
+                            delta_frames = 0.0
+                            
+                    # Global logic: if stopped or disconnected, smoothly rewind to frame 0 (only for telemetry modes)
+                    if self.mode != 2 and self.smoothed_speed < 0.5:
+                        if self.current_frame_float > 0.0:
+                            # Smoothly rewind: starts at 1.5x and accelerates over time (to avoid long waiting times)
+                            rewind_speed = base_rate * 1.5 * self.rewind_factor
+                            delta_frames = -rewind_speed
+                            self.current_frame_float = max(0.0, self.current_frame_float + delta_frames)
+                            # Increment rewind factor to accelerate the longer we are stopped (max speed cap of 15x normal speed)
+                            self.rewind_factor = min(10.0, self.rewind_factor + 0.03)
+                        else:
+                            delta_frames = 0.0
+                            self.current_frame_float = 0.0
+                            self.rewind_factor = 1.0
                     else:
-                        delta_frames = 0.0
-                        
-                # Global logic: if stopped or disconnected, smoothly rewind to frame 0 (only for telemetry modes)
-                if self.mode != 2 and self.smoothed_speed < 0.5:
-                    if self.current_frame_float > 0.0:
-                        # Smoothly rewind: starts at 1.5x and accelerates over time (to avoid long waiting times)
-                        rewind_speed = base_rate * 1.5 * self.rewind_factor
-                        delta_frames = -rewind_speed
-                        self.current_frame_float = max(0.0, self.current_frame_float + delta_frames)
-                        # Increment rewind factor to accelerate the longer we are stopped (max speed cap of 15x normal speed)
-                        self.rewind_factor = min(10.0, self.rewind_factor + 0.03)
-                    else:
-                        delta_frames = 0.0
-                        self.current_frame_float = 0.0
                         self.rewind_factor = 1.0
-                else:
-                    self.rewind_factor = 1.0
-                    self.current_frame_float += delta_frames
-                    self.current_frame_float %= self.total_frames
-                        
-                target = int(self.current_frame_float)
-                
-                c_speed = self.smoothed_speed
-                c_mode = self.mode
-
-            if target != self.last_emitted_target:
-                # O(1) instantaneous random access decoding from RAM
-                jpeg_bytes = self.frames_cache[target]
+                        self.current_frame_float += delta_frames
+                        self.current_frame_float %= self.total_frames
+                            
+                    target = int(self.current_frame_float)
+                    c_speed = self.smoothed_speed
+                    c_total = self.total_frames
+                    
+                    # Copy frame data inside lock to prevent race condition with load_cache()
+                    if target != self.last_emitted_target and 0 <= target < self.total_frames:
+                        jpeg_bytes = self.frames_cache[target]
+            
+            # Decode and emit outside lock (heavy CPU work should not hold the lock)
+            if jpeg_bytes is not None:
                 frame_data = np.frombuffer(jpeg_bytes, dtype=np.uint8)
                 frame = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
                 
@@ -575,7 +588,7 @@ class PlaybackThread(QThread):
                     
                     self.frame_ready.emit(qimg)
                     self.last_emitted_target = target
-                    self.info_updated.emit(c_speed, delta_frames, target, self.total_frames)
+                    self.info_updated.emit(c_speed, delta_frames, target, c_total)
             
             elapsed = time.time() - start_time
             sleep_time = max(0, 0.016 - elapsed)
@@ -622,6 +635,8 @@ class VideoDisplayWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)  # Bilinear interpolation for lossless scaling
+        painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#0b0c10"))
         if self.image and not self.image.isNull():
             w, h = self.width(), self.height()
@@ -636,12 +651,12 @@ class VideoDisplayWidget(QWidget):
             x = (w - scaled_w) // 2
             y = (h - scaled_h) // 2
             
-            # Hardware accelerated scale & draw
+            # Hardware accelerated scale & draw with smooth interpolation
             painter.drawImage(QRect(x, y, scaled_w, scaled_h), self.image)
         else:
             painter.setPen(QColor("#a1a7c4"))
             font = QFont()
-            font.setPointSize(24)
+            font.setPointSize(28)
             font.setBold(True)
             painter.setFont(font)
             painter.drawText(self.rect(), Qt.AlignCenter, self.text)
@@ -708,6 +723,7 @@ class ExternalVideoWindow(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)  # Bilinear interpolation for lossless scaling
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#000000"))
         
@@ -724,6 +740,7 @@ class ExternalVideoWindow(QWidget):
             x = (w - scaled_w) // 2
             y = (h - scaled_h) // 2
             
+            # Smooth scaling preserves original video quality
             painter.drawImage(QRect(x, y, scaled_w, scaled_h), self.image)
         else:
             painter.setPen(QColor("#38BDF8"))
@@ -820,6 +837,85 @@ class ExternalVideoWindow(QWidget):
         self.closed_signal.emit()
         event.accept()
 
+class UpwardPopupFilter(QObject):
+    def __init__(self, combobox, popup):
+        super().__init__(popup)
+        self.combobox = combobox
+        self.popup = popup
+        self.is_positioning = False
+        self.animation = None
+        self.target_geom = None
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Move, QEvent.Resize):
+            # If the custom slide-up animation is running, let it control the geometry
+            if self.animation and self.animation.state() == QAbstractAnimation.Running:
+                return False
+                
+            if not self.is_positioning:
+                self.is_positioning = True
+                rect = self.combobox.rect()
+                pos = self.combobox.mapToGlobal(rect.topLeft())
+                popup_height = self.popup.height()
+                if event.type() == QEvent.Resize:
+                    popup_height = event.size().height()
+                new_y = pos.y() - popup_height - 4
+                
+                self.target_geom = QRect(pos.x(), new_y, self.popup.width(), popup_height)
+                self.popup.move(pos.x(), new_y)
+                self.is_positioning = False
+                if event.type() == QEvent.Move:
+                    return True # Block original down-move event
+                    
+        elif event.type() == QEvent.Show:
+            if self.target_geom:
+                rect = self.combobox.rect()
+                pos = self.combobox.mapToGlobal(rect.topLeft())
+                
+                # Start geometry has height 0, positioned at the top of the combobox
+                start_geom = QRect(self.target_geom.x(), pos.y() - 4, self.target_geom.width(), 0)
+                
+                self.is_positioning = True
+                self.popup.setGeometry(start_geom)
+                self.is_positioning = False
+                
+                # Animate slide-up from bottom (combobox top) to top
+                self.animation = QPropertyAnimation(self.popup, b"geometry")
+                self.animation.setDuration(160) # Fast premium slide-up (160ms)
+                self.animation.setStartValue(start_geom)
+                self.animation.setEndValue(self.target_geom)
+                self.animation.setEasingCurve(QEasingCurve.OutCubic)
+                self.animation.start()
+                
+        return super().eventFilter(obj, event)
+
+class UpwardComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.popup_filter = None
+
+    def showPopup(self):
+        # Temporarily disable standard combo box pop down animation to prevent conflicts
+        old_effects = QApplication.isEffectEnabled(Qt.UI_AnimateCombo)
+        QApplication.setEffectEnabled(Qt.UI_AnimateCombo, False)
+        
+        # Turn off scrollbars to prevent them from flashing/showing during animation
+        self.view().setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view().setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        if not self.popup_filter:
+            popup = self.view().window()
+            # Set translucent background for popup window to enable smooth rounded corners
+            popup.setAttribute(Qt.WA_TranslucentBackground)
+            
+            self.popup_filter = UpwardPopupFilter(self, popup)
+            popup.installEventFilter(self.popup_filter)
+            
+        super().showPopup()
+        
+        # Restore standard animations
+        QApplication.setEffectEnabled(Qt.UI_AnimateCombo, old_effects)
+
 class VideoPlayerWidget(QMainWindow):
     """
     The main GUI application for the Adaptive Video Player.
@@ -830,8 +926,8 @@ class VideoPlayerWidget(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OBD-II Adaptive Video Player")
-        self.setGeometry(100, 100, 1250, 750) # Adjusted size for better Full HD compatibility
-        self.setMinimumSize(1250, 600) # Increased min width to prevent UI clipping on scaled monitors
+        self.setGeometry(100, 100, 1280, 750)
+        self.setMinimumSize(900, 560) # Allow window to shrink gracefully without clipping
         self.setAcceptDrops(True)
         
         # Set window icon
@@ -847,6 +943,7 @@ class VideoPlayerWidget(QMainWindow):
         
         self.init_ui()
         self.apply_theme()
+        self.showMaximized()  # Launch maximized for best Full HD experience
         
         self.playback_thread = PlaybackThread()
         self.playback_thread.frame_ready.connect(self.on_frame_ready)
@@ -917,7 +1014,7 @@ class VideoPlayerWidget(QMainWindow):
         
         # Center HUD panel
         self.loading_panel = QWidget()
-        self.loading_panel.setFixedSize(450, 160)
+        self.loading_panel.setFixedSize(550, 200)
         self.loading_panel.setObjectName("loading_panel")
         self.loading_panel.setStyleSheet("""
             #loading_panel {
@@ -942,7 +1039,7 @@ class VideoPlayerWidget(QMainWindow):
         self.load_label = QLabel("INITIALIZING PRECACHE...")
         self.load_label.setStyleSheet("""
             color: #38BDF8; 
-            font-size: 13px; 
+            font-size: 15px; 
             font-weight: 900; 
             letter-spacing: 2px;
             background: transparent;
@@ -953,7 +1050,7 @@ class VideoPlayerWidget(QMainWindow):
         
         # Middle row: custom animated progress bar
         self.load_bar = DynamicProgressBar()
-        self.load_bar.setFixedHeight(12)
+        self.load_bar.setFixedHeight(14)
         panel_layout.addWidget(self.load_bar)
         
         # Bottom row: stats (Left) and percentage (Right)
@@ -962,7 +1059,7 @@ class VideoPlayerWidget(QMainWindow):
         self.load_stats_label = QLabel("INITIALIZING...")
         self.load_stats_label.setStyleSheet("""
             color: #94A3B8;
-            font-size: 12px;
+            font-size: 14px;
             font-weight: 700;
             background: transparent;
         """)
@@ -974,7 +1071,7 @@ class VideoPlayerWidget(QMainWindow):
         self.load_pct_label = QLabel("0%")
         self.load_pct_label.setStyleSheet("""
             color: #FFFFFF; 
-            font-size: 20px; 
+            font-size: 24px; 
             font-weight: 900;
             background: transparent;
         """)
@@ -995,7 +1092,7 @@ class VideoPlayerWidget(QMainWindow):
         self.controls_widget = QWidget(self.central_widget)
         self.controls_widget.setObjectName("controls_container")
         controls_layout = QVBoxLayout(self.controls_widget)
-        controls_layout.setContentsMargins(20, 20, 20, 20) # Slightly tighter margins
+        controls_layout.setContentsMargins(24, 22, 24, 22)
         controls_layout.setSpacing(15)
  
         # Top row: Buttons and Mode
@@ -1037,7 +1134,7 @@ class VideoPlayerWidget(QMainWindow):
         mode_label.setObjectName("header_label")
         top_row.addWidget(mode_label)
 
-        self.mode_dropdown = PremiumComboBox()
+        self.mode_dropdown = UpwardComboBox()
         self.mode_dropdown.addItems([
             "1: Reversible (Dynamic)", 
             "2: Classic (Forward Only)",
@@ -1045,7 +1142,7 @@ class VideoPlayerWidget(QMainWindow):
         ])
         self.mode_dropdown.setCursor(Qt.PointingHandCursor)
         self.mode_dropdown.setFocusPolicy(Qt.NoFocus) # Prevent spacebar hijack
-        self.mode_dropdown.setFixedWidth(240) # Prevent dropdown from shrinking and ensure text fits
+        self.mode_dropdown.setFixedWidth(340) # Prevent dropdown from shrinking and ensure text fits
         
         # Configure drop-down list view to render rounded corners
         self.mode_dropdown.setView(QListView())
@@ -1064,7 +1161,7 @@ class VideoPlayerWidget(QMainWindow):
         self.play_pause_btn.setObjectName("action_btn")
         self.play_pause_btn.setCursor(Qt.PointingHandCursor)
         self.play_pause_btn.setFocusPolicy(Qt.NoFocus) # Prevent spacebar hijack
-        self.play_pause_btn.setMinimumWidth(140) # Ensure text is never truncated
+        self.play_pause_btn.setMinimumWidth(160) # Ensure text is never truncated
         self.play_pause_btn.clicked.connect(self.toggle_play_pause)
         self.autoplay_is_playing = True
         
@@ -1077,13 +1174,11 @@ class VideoPlayerWidget(QMainWindow):
         self.play_pause_btn.hide()
         
         top_row.addWidget(self.play_pause_btn)
-        
-        top_row.addStretch()
 
-        # Premium Telemetry Display
+        # Premium Telemetry Display — no second stretch so it stays visible at any window width
         self.info_panel = QWidget()
         self.info_panel.setObjectName("info_panel")
-        self.info_panel.setFixedWidth(320) # Lock size so it never squishes or truncates text
+        self.info_panel.setMinimumWidth(180)  # Can grow but won't overflow at small widths
         self.info_panel.setAttribute(Qt.WA_StyledBackground, True) # Fixes jagged edges on rounded borders in Qt
         
         # Premium Glow for Info Panel
@@ -1093,25 +1188,25 @@ class VideoPlayerWidget(QMainWindow):
         self.info_glow.setOffset(0, 0)
         self.info_panel.setGraphicsEffect(self.info_glow)
         info_layout = QHBoxLayout(self.info_panel)
-        info_layout.setContentsMargins(15, 12, 15, 12)
-        info_layout.setSpacing(8)
+        info_layout.setContentsMargins(16, 12, 16, 12)
+        info_layout.setSpacing(6)
         
         self.speed_val_label = QLabel("0.0")
         self.speed_val_label.setObjectName("speed_val")
-        self.speed_val_label.setFixedWidth(85)
+        self.speed_val_label.setFixedWidth(90)
         self.speed_val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         info_layout.addWidget(self.speed_val_label)
         
         self.speed_unit_label = QLabel("KM/H")
         self.speed_unit_label.setObjectName("speed_unit")
-        self.speed_unit_label.setFixedWidth(45)
+        self.speed_unit_label.setFixedWidth(50)
         info_layout.addWidget(self.speed_unit_label)
         
-        info_layout.addSpacing(12)
+        info_layout.addSpacing(8)
         
         self.frame_val_label = QLabel("FRAME: 0 / 0")
         self.frame_val_label.setObjectName("frame_val")
-        self.frame_val_label.setFixedWidth(130)
+        self.frame_val_label.setFixedWidth(170)
         self.frame_val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         info_layout.addWidget(self.frame_val_label)
         
@@ -1135,9 +1230,10 @@ class VideoPlayerWidget(QMainWindow):
         
         self.sens_val_label = QLabel("1.0x")
         self.sens_val_label.setObjectName("val_label")
+        self.sens_val_label.setFixedWidth(52)  # Prevent layout shift when value changes
         bottom_row.addWidget(self.sens_val_label)
         
-        bottom_row.addSpacing(40)
+        bottom_row.addSpacing(30)
 
         smooth_label = QLabel("SMOOTHING")
         smooth_label.setObjectName("slider_label")
@@ -1152,6 +1248,7 @@ class VideoPlayerWidget(QMainWindow):
         
         self.smooth_val_label = QLabel("0.20")
         self.smooth_val_label.setObjectName("val_label")
+        self.smooth_val_label.setFixedWidth(52)  # Prevent layout shift when value changes
         bottom_row.addWidget(self.smooth_val_label)
 
         controls_layout.addLayout(bottom_row)
@@ -1373,7 +1470,7 @@ class VideoPlayerWidget(QMainWindow):
             self.showFullScreen()
         else:
             self.controls_widget.show()
-            self.showNormal()
+            self.showMaximized()
 
     def closeEvent(self, event):
         if self.external_window:
@@ -1393,10 +1490,12 @@ class VideoPlayerWidget(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
+    # Enable High-DPI scaling for BOTH modes (video player AND obd scanner)
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    
     if "--run-obd-scanner" in sys.argv:
         import obd_gui_qt
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         app = QApplication(sys.argv)
         window = obd_gui_qt.OBDDashboardQT()
         window.show()
