@@ -119,6 +119,7 @@ QMainWindow {
 }
 
 QComboBox {
+    combobox-popup: 0;
     background-color: rgba(30, 41, 59, 255);
     color: #F8FAFC;
     border: 1px solid rgba(255, 255, 255, 30);
@@ -136,6 +137,11 @@ QComboBox::drop-down {
 QComboBox::down-arrow {
     width: 14px;
     height: 14px;
+}
+
+QComboBox QFrame {
+    background-color: transparent;
+    border: none;
 }
 
 QComboBox QAbstractItemView {
@@ -667,14 +673,14 @@ class PremiumComboBox(QComboBox):
     white background bounding box around styled rounded dropdowns.
     """
     def showPopup(self):
-        popup = self.view().parentWidget()
-        if popup:
-            popup.setAttribute(Qt.WA_TranslucentBackground, True)
-            popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
-            popup.setObjectName("combo_popup_container")
-            popup.setStyleSheet("#combo_popup_container { background: transparent; border: none; }")
-        
         super().showPopup()
+        
+        # Find the container window and parent frame
+        popup = self.view().parentWidget()
+        container = self.view().window()
+        
+        # Style the popup container asynchronously after it is shown to prevent white background
+        QTimer.singleShot(0, lambda: self._style_popup(popup, container))
         
         # Manually align popup to the combobox with collision detection for screen bounds
         if popup:
@@ -689,6 +695,17 @@ class PremiumComboBox(QComboBox):
             else:
                 # Plenty of space -> Drop DOWN
                 popup.setGeometry(global_pos.x(), global_pos.y() + 2, self.width(), popup.height())
+
+    def _style_popup(self, popup, container):
+        try:
+            if container:
+                container.setAttribute(Qt.WA_TranslucentBackground, True)
+                container.setStyleSheet("background: transparent; border: none;")
+            if popup:
+                popup.setAttribute(Qt.WA_TranslucentBackground, True)
+                popup.setStyleSheet("background: transparent; border: none;")
+        except Exception:
+            pass
 
 class ExternalVideoWindow(QWidget):
     """
@@ -903,11 +920,21 @@ class UpwardComboBox(QComboBox):
         self.view().setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.view().setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
+        popup = self.view().window()
+        container = self.view().parentWidget()
+        
+        # Style the popup container to prevent the white background "miracle"
+        for widget in (popup, container):
+            if widget:
+                widget.setAttribute(Qt.WA_TranslucentBackground, True)
+                if widget.isWindow():
+                    widget.setWindowFlags(widget.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+                # Assign a specific object name and target only this container so it doesn't cascade
+                # and make the actual drop-down list items transparent.
+                widget.setObjectName("TransparentPopupContainer")
+                widget.setStyleSheet("QWidget#TransparentPopupContainer { background: transparent; border: none; }")
+        
         if not self.popup_filter:
-            popup = self.view().window()
-            # Set translucent background for popup window to enable smooth rounded corners
-            popup.setAttribute(Qt.WA_TranslucentBackground)
-            
             self.popup_filter = UpwardPopupFilter(self, popup)
             popup.installEventFilter(self.popup_filter)
             
@@ -927,7 +954,7 @@ class VideoPlayerWidget(QMainWindow):
         super().__init__()
         self.setWindowTitle("OBD-II Adaptive Video Player")
         self.setGeometry(100, 100, 1280, 750)
-        self.setMinimumSize(900, 560) # Allow window to shrink gracefully without clipping
+        self.setMinimumSize(1024, 600) # Increased minimum width to prevent UI clipping when minimized
         self.setAcceptDrops(True)
         
         # Set window icon
@@ -1309,10 +1336,13 @@ class VideoPlayerWidget(QMainWindow):
                 return # Already running
                 
         try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
             if getattr(sys, 'frozen', False):
-                self.obd_process = subprocess.Popen([sys.executable, "--run-obd-scanner"])
+                self.obd_process = subprocess.Popen([sys.executable, "--run-obd-scanner"], cwd=script_dir)
             else:
-                self.obd_process = subprocess.Popen([sys.executable, sys.argv[0], "--run-obd-scanner"])
+                script_path = os.path.abspath(__file__)
+                self.obd_process = subprocess.Popen([sys.executable, script_path, "--run-obd-scanner"], cwd=script_dir)
+                
             self.launch_obd_btn.setText("✅ SCANNER RUNNING")
             self.launch_obd_btn.setStyleSheet("background-color: #10B981; color: #FFFFFF; border: 1px solid #10B981;")
             if hasattr(self, 'obd_glow'):
