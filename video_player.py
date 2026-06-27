@@ -4,6 +4,7 @@ import threading
 import time
 import cv2
 import numpy as np
+import obd_gui_qt
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QSlider, QComboBox, QFileDialog, QSizePolicy, QProgressBar, QGraphicsDropShadowEffect, QListView)
@@ -323,18 +324,15 @@ class DynamicProgressBar(QWidget):
 class UdpListener(QThread):
     """
     Background thread that listens for UDP packets containing telemetry data (speed).
-    
-    Attributes:
-        speed_received (pyqtSignal): Signal emitted when a new speed value is parsed.
+    Passes data directly to the playback thread to eliminate signal-routing latency.
     """
-    speed_received = pyqtSignal(float)
-
-    def __init__(self, port: int = 28765):
+    def __init__(self, playback_thread, port: int = 28765):
         super().__init__()
+        self.playback_thread = playback_thread
         self.port = port
         self.is_running = True
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.settimeout(0.5)
+        self.sock.settimeout(2.0)
         try:
             self.sock.bind(('127.0.0.1', self.port))
             print(f"Listening for UDP on port {self.port}")
@@ -346,10 +344,10 @@ class UdpListener(QThread):
             try:
                 data, addr = self.sock.recvfrom(1024)
                 speed = float(data.decode('utf-8'))
-                self.speed_received.emit(speed)
+                self.playback_thread.update_speed(speed)
             except socket.timeout:
-                # If no data received for 0.5s, assume disconnected and emit speed 0
-                self.speed_received.emit(0.0)
+                # If no data received for 2.0s, assume disconnected and reset speed to 0
+                self.playback_thread.update_speed(0.0)
             except Exception as e:
                 pass
 
@@ -469,6 +467,7 @@ class PlaybackThread(QThread):
         self.last_raw_speed = 0.0
         self.target_raw_speed = 0.0
         self.packet_received_time = 0.0
+        self.last_loop_time = 0.0
 
     def update_speed(self, speed_val):
         with self.lock:
@@ -503,8 +502,13 @@ class PlaybackThread(QThread):
             self.last_emitted_target = -1
 
     def run(self):
+        self.last_loop_time = time.time()
         while self.is_running:
             start_time = time.time()
+            dt = start_time - self.last_loop_time
+            self.last_loop_time = start_time
+            if dt <= 0.0 or dt > 0.2:
+                dt = 0.016 # Default fallback for frame rate drop / startup
             
             # Acquire lock for state computation only (no sleep inside lock)
             target = -1
@@ -516,8 +520,6 @@ class PlaybackThread(QThread):
                 if self.total_frames == 0 or not self.frames_cache:
                     pass  # Will sleep outside lock below
                 else:
-                    dt = 0.016 # ~60fps target
-                    
                     # Save previous interpolated speed to calculate acceleration
                     self.last_speed = self.current_speed
                     
@@ -534,6 +536,9 @@ class PlaybackThread(QThread):
                     
                     # 2. Apply standard exponential smoothing (EMA) on top to filter out high-frequency noise
                     self.smoothed_speed += (self.current_speed - self.smoothed_speed) * self.smoothing_alpha
+                    
+                    # Clamp speed to 0.0 to prevent fractional power of negative floats (which yields complex numbers in Python)
+                    clamped_speed = max(0.0, self.smoothed_speed)
                     base_rate = self.fps * dt
                     
                     if self.mode == 0:
@@ -545,10 +550,10 @@ class PlaybackThread(QThread):
                             
                         # Non-linear speed scaling: smooths out high speeds
                         # 30 km/h = 1.0x multiplier, 100 km/h = ~2.2x multiplier (instead of 10x)
-                        speed_multiplier = (self.smoothed_speed / 30.0) ** 0.65
+                        speed_multiplier = (clamped_speed / 30.0) ** 0.65
                         delta_frames = base_rate * speed_multiplier * self.sensitivity * direction
                     elif self.mode == 1:
-                        speed_multiplier = (self.smoothed_speed / 30.0) ** 0.65
+                        speed_multiplier = (clamped_speed / 30.0) ** 0.65
                         delta_frames = base_rate * speed_multiplier * self.sensitivity
                     else: # Mode 2: Autoplay (Loop)
                         if self.autoplay_playing:
@@ -557,7 +562,7 @@ class PlaybackThread(QThread):
                             delta_frames = 0.0
                             
                     # Global logic: if stopped or disconnected, smoothly rewind to frame 0 (only for telemetry modes)
-                    if self.mode != 2 and self.smoothed_speed < 0.5:
+                    if self.mode != 2 and clamped_speed < 0.5:
                         if self.current_frame_float > 0.0:
                             # Smoothly rewind: starts at 1.5x and accelerates over time (to avoid long waiting times)
                             rewind_speed = base_rate * 1.5 * self.rewind_factor
@@ -977,8 +982,7 @@ class VideoPlayerWidget(QMainWindow):
         self.playback_thread.info_updated.connect(self.on_info_updated)
         self.playback_thread.start()
 
-        self.udp_listener = UdpListener()
-        self.udp_listener.speed_received.connect(self.on_speed_received)
+        self.udp_listener = UdpListener(self.playback_thread)
         self.udp_listener.start()
         
         # Connect UI changes directly to the thread
@@ -1388,9 +1392,6 @@ class VideoPlayerWidget(QMainWindow):
     def on_load_error(self, err_msg):
         self.loading_widget.hide()
         self.video_display.set_text(f"Error: {err_msg}")
-
-    def on_speed_received(self, speed):
-        self.playback_thread.update_speed(speed)
 
     def on_info_updated(self, smoothed_speed, delta_frames, current_frame, total_frames):
         from PyQt5.QtGui import QColor
