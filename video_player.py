@@ -728,7 +728,7 @@ class ExternalVideoWindow(QWidget):
         # Set window icon
         import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        logo_path = os.path.join(script_dir, "logo.jpeg")
+        logo_path = os.path.join(script_dir, "logo.png")
         if os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
         
@@ -965,7 +965,7 @@ class VideoPlayerWidget(QMainWindow):
         # Set window icon
         import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        logo_path = os.path.join(script_dir, "logo.jpeg")
+        logo_path = os.path.join(script_dir, "logo.png")
         if os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
         

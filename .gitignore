@@ -1,3 +1,35 @@
 # Логи OBD-II
 obd_log_*.csv
 obd_errors_*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Сборка
+build/
+dist/
+*.spec
+
+# Виртуальные окружения
+venv/
+.venv/
+env/
+ENV/
+
+# Системные файлы macOS / Windows
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+
+# IDE settings (PyCharm, VS Code)
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

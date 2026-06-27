@@ -61,7 +61,7 @@
 * Процесс запускает второе независимое окно — **OBD-II Scanner**. Они мгновенно связываются по UDP на порту `28765`.
 
 ### Команда для компиляции:
-Для корректного отображения иконок внутри `.exe` необходимо принудительно запаковать файл логотипа `logo.jpeg`.
+Для корректного отображения иконок внутри `.exe` необходимо принудительно запаковать файл логотипа `logo.png`.
 
 1. Установите **PyInstaller**:
    ```cmd
@@ -70,11 +70,11 @@
 2. Выполните команду компиляции в папке проекта:
    * **Для Windows** (используется разделитель `;`):
      ```cmd
-     pyinstaller --onefile --clean --name "ELM327_System" --add-data "logo.jpeg;." video_player.py
+     pyinstaller --onefile --clean --name "ELM327_System" --add-data "logo.png;." video_player.py
      ```
    * **Для macOS** (используется разделитель `:`):
      ```bash
-     pyinstaller --onefile --clean --name "ELM327_System" --add-data "logo.jpeg:." video_player.py
+     pyinstaller --onefile --clean --name "ELM327_System" --add-data "logo.png:." video_player.py
      ```
 3. Готовый файл `ELM327_System.exe` (или `ELM327_System` на Mac) появится в папке `dist/`.
 
