@@ -70,11 +70,11 @@
 2. Выполните команду компиляции в папке проекта:
    * **Для Windows** (используется разделитель `;`):
      ```cmd
-     pyinstaller --onefile --clean --name "ELM327_System" --add-data "logo.png;." video_player.py
+     pyinstaller --onefile --clean --name "ELM327_System" --icon="logo.png" --add-data "logo.png;." video_player.py
      ```
    * **Для macOS** (используется разделитель `:`):
      ```bash
-     pyinstaller --onefile --clean --name "ELM327_System" --add-data "logo.png:." video_player.py
+     pyinstaller --onefile --clean --name "ELM327_System" --icon="logo.png" --add-data "logo.png:." video_player.py
      ```
 3. Готовый файл `ELM327_System.exe` (или `ELM327_System` на Mac) появится в папке `dist/`.
 

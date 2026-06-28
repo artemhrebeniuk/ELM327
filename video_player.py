@@ -454,8 +454,14 @@ class PlaybackThread(QThread):
         
         self.sensitivity = 1.0
         self.smoothing_alpha = 0.2
-        self.mode = 0 # 0: Reversible, 1: Classic, 2: Autoplay
+        self.mode = 0 # 0: Reversible, 1: Classic, 2: Autoplay, 3: Reversible Clamp, 4: Centered Loop
         self.autoplay_playing = True
+        
+        self.is_braking = False
+        self.last_clamped_speed = 0.0
+        self.last_smoothed_speed = 0.0
+        self.decel_counter = 0
+        self.accel_counter = 0
         
         self.lock = threading.Lock()
         self.last_emitted_target = -1
@@ -522,6 +528,8 @@ class PlaybackThread(QThread):
                 else:
                     # Save previous interpolated speed to calculate acceleration
                     self.last_speed = self.current_speed
+                    # Save previous smoothed speed to calculate smoothed acceleration
+                    self.last_smoothed_speed = self.smoothed_speed
                     
                     # 1. Smoothly interpolate raw speed based on time elapsed since the last UDP packet
                     if self.packet_received_time > 0:
@@ -540,17 +548,38 @@ class PlaybackThread(QThread):
                     # Clamp speed to 0.0 to prevent fractional power of negative floats (which yields complex numbers in Python)
                     clamped_speed = max(0.0, self.smoothed_speed)
                     base_rate = self.fps * dt
+                    direction = 1.0
                     
-                    if self.mode == 0:
-                        acceleration = self.current_speed - self.last_speed
-                        if abs(acceleration) < 0.005: # Lower threshold since interpolated speed changes smoothly
+                    if self.mode == 0 or self.mode == 3 or self.mode == 4:
+                        # Use smoothed speed acceleration to eliminate high-frequency jitter
+                        acceleration = self.smoothed_speed - self.last_smoothed_speed
+                        if abs(acceleration) < 0.002: # Smoothed speed threshold can be tighter
                             direction = 1.0
                         else:
                             direction = 1.0 if acceleration >= 0 else -1.0
                             
+                        if self.mode == 3:
+                            if direction < 0:
+                                self.decel_counter += 1
+                                self.accel_counter = 0
+                                # Require 5 consecutive loops of deceleration to confirm braking
+                                if self.decel_counter >= 5:
+                                    self.is_braking = True
+                            else:
+                                self.accel_counter += 1
+                                self.decel_counter = 0
+                                # Require 15 consecutive loops of acceleration/stability to exit braking state
+                                if self.accel_counter >= 15:
+                                    self.is_braking = False
+                            
                         # Non-linear speed scaling: smooths out high speeds
-                        # 30 km/h = 1.0x multiplier, 100 km/h = ~2.2x multiplier (instead of 10x)
                         speed_multiplier = (clamped_speed / 30.0) ** 0.65
+                        
+                        # In Mode 3 during confirmed braking, clamp the playback rate multiplier
+                        # so that it rewinds at a comfortable, smooth rate (not too slow, not too fast)
+                        if self.mode == 3 and self.is_braking:
+                            speed_multiplier = max(0.4, min(1.2, speed_multiplier))
+                            
                         delta_frames = base_rate * speed_multiplier * self.sensitivity * direction
                     elif self.mode == 1:
                         speed_multiplier = (clamped_speed / 30.0) ** 0.65
@@ -561,24 +590,53 @@ class PlaybackThread(QThread):
                         else:
                             delta_frames = 0.0
                             
-                    # Global logic: if stopped or disconnected, smoothly rewind to frame 0 (only for telemetry modes)
+                    # Global logic: if stopped or disconnected, smoothly rewind (only for telemetry modes)
                     if self.mode != 2 and clamped_speed < 0.5:
-                        if self.current_frame_float > 0.0:
-                            # Smoothly rewind: starts at 1.5x and accelerates over time (to avoid long waiting times)
-                            rewind_speed = base_rate * 1.5 * self.rewind_factor
-                            delta_frames = -rewind_speed
-                            self.current_frame_float = max(0.0, self.current_frame_float + delta_frames)
-                            # Increment rewind factor to accelerate the longer we are stopped (max speed cap of 15x normal speed)
-                            self.rewind_factor = min(10.0, self.rewind_factor + 0.03)
+                        mid_frame = self.total_frames / 2.0
+                        if self.mode == 4:
+                            # Mode 4 returns to mid_frame instead of 0.0
+                            if self.current_frame_float != mid_frame:
+                                rewind_speed = base_rate * 1.5 * self.rewind_factor
+                                if self.current_frame_float < mid_frame:
+                                    self.current_frame_float = min(mid_frame, self.current_frame_float + rewind_speed)
+                                else:
+                                    self.current_frame_float = max(mid_frame, self.current_frame_float - rewind_speed)
+                                self.rewind_factor = min(10.0, self.rewind_factor + 0.03)
+                            else:
+                                delta_frames = 0.0
+                                self.rewind_factor = 1.0
                         else:
-                            delta_frames = 0.0
-                            self.current_frame_float = 0.0
-                            self.rewind_factor = 1.0
+                            if self.current_frame_float > 0.0:
+                                # Smoothly rewind: starts at 1.5x and accelerates over time (to avoid long waiting times)
+                                rewind_speed = base_rate * 1.5 * self.rewind_factor
+                                delta_frames = -rewind_speed
+                                self.current_frame_float = max(0.0, self.current_frame_float + delta_frames)
+                                # Increment rewind factor to accelerate the longer we are stopped (max speed cap of 15x normal speed)
+                                self.rewind_factor = min(10.0, self.rewind_factor + 0.03)
+                            else:
+                                delta_frames = 0.0
+                                self.current_frame_float = 0.0
+                                self.rewind_factor = 1.0
                     else:
                         self.rewind_factor = 1.0
-                        self.current_frame_float += delta_frames
-                        self.current_frame_float %= self.total_frames
+                        mid_frame = self.total_frames / 2.0
+                        
+                        if self.mode == 4:
+                            self.current_frame_float += delta_frames
+                            if direction < 0:
+                                if self.current_frame_float <= 0.0:
+                                    self.current_frame_float = mid_frame
+                            else:
+                                if self.current_frame_float >= self.total_frames:
+                                    self.current_frame_float = mid_frame
+                        elif self.mode == 3 and direction < 0:
+                            self.current_frame_float += delta_frames
+                            self.current_frame_float = max(0.0, self.current_frame_float)
+                        else:
+                            self.current_frame_float += delta_frames
+                            self.current_frame_float %= self.total_frames
                             
+                    self.last_clamped_speed = clamped_speed
                     target = int(self.current_frame_float)
                     c_speed = self.smoothed_speed
                     c_total = self.total_frames
@@ -1173,7 +1231,9 @@ class VideoPlayerWidget(QMainWindow):
         self.mode_dropdown.addItems([
             "1: Reversible (Dynamic)", 
             "2: Classic (Forward Only)",
-            "3: Autoplay (Loop)"
+            "3: Autoplay (Loop)",
+            "4: Reversible (Clamp)",
+            "5: Centered (Loop)"
         ])
         self.mode_dropdown.setCursor(Qt.PointingHandCursor)
         self.mode_dropdown.setFocusPolicy(Qt.NoFocus) # Prevent spacebar hijack
