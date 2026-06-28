@@ -985,6 +985,10 @@ class VideoPlayerWidget(QMainWindow):
         self.udp_listener = UdpListener(self.playback_thread)
         self.udp_listener.start()
         
+        # Timer to monitor external scanner process lifecycle
+        self.obd_monitor_timer = QTimer(self)
+        self.obd_monitor_timer.timeout.connect(self.monitor_obd_process)
+        
         # Connect UI changes directly to the thread
         self.sens_slider.valueChanged.connect(self.sync_settings)
         self.smooth_slider.valueChanged.connect(self.sync_settings)
@@ -1351,8 +1355,24 @@ class VideoPlayerWidget(QMainWindow):
             self.launch_obd_btn.setStyleSheet("background-color: #10B981; color: #FFFFFF; border: 1px solid #10B981;")
             if hasattr(self, 'obd_glow'):
                 self.obd_glow.setColor(QColor(16, 185, 129, 150))
+                
+            # Start monitoring process lifecycle
+            self.obd_monitor_timer.start(500)
         except Exception as e:
             self.video_display.set_text(f"Launch Error: {e}")
+
+    def monitor_obd_process(self):
+        if hasattr(self, 'obd_process') and self.obd_process is not None:
+            if self.obd_process.poll() is not None:
+                self.obd_process = None
+                self.obd_monitor_timer.stop()
+                self.reset_obd_button()
+
+    def reset_obd_button(self):
+        self.launch_obd_btn.setText("🚀 START SCANNER")
+        self.launch_obd_btn.setStyleSheet("")  # Restores main stylesheet styles (transparency, hover)
+        if hasattr(self, 'obd_glow'):
+            self.obd_glow.setColor(QColor(56, 189, 248, 120))  # Restores sky blue glow
 
     def start_loading(self, path):
         if self.loader_thread and self.loader_thread.isRunning():
